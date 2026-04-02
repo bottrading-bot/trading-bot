@@ -1,0 +1,9 @@
+alpaca-py
+yfinance
+pandas
+numpy
+tensorflow
+scikit-learn
+flask
+requests
+gunicorn

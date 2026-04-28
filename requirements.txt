@@ -1,0 +1,6 @@
+gTTS==2.5.4
+moviepy==2.1.2
+Pillow==10.4.0
+requests==2.32.3
+imageio-ffmpeg==0.5.1
+python-dotenv==1.2.2

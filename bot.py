@@ -607,6 +607,9 @@ def detect_gameplay_profile(package: VideoPackage) -> str:
 
 def find_font(size: int, bold: bool = False):
     candidates = []
+    assets_fonts = Path("shorts_assets/fonts")
+    candidates.append(assets_fonts / "Anton-Regular.ttf")
+    candidates.append(assets_fonts / "Montserrat-ExtraBold.ttf")
 
     if os.name == "nt":
         font_dir = Path("C:/Windows/Fonts")
@@ -770,6 +773,19 @@ def resolve_piper_model_paths(config: dict[str, Any]) -> tuple[Path, Path | None
     models = sorted(file for file in voices_dir.glob("*.onnx") if file.is_file())
     if not models:
         return None
+
+    preferred_names = [
+        "de_DE-eva_k-x_low.onnx",
+        "de_DE-eva_k-low.onnx",
+        "de_DE-kerstin-low.onnx",
+        "de_DE-ramona-low.onnx",
+        "de_DE-karlsson-low.onnx",
+    ]
+    for preferred_name in preferred_names:
+        for model in models:
+            if model.name == preferred_name:
+                config_path = Path(f"{model}.json")
+                return model, config_path, None
 
     model_path = models[0]
     config_path = Path(f"{model_path}.json")

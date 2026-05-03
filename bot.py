@@ -11,6 +11,7 @@ import random
 import subprocess
 import sys
 import traceback
+import unicodedata
 import warnings
 import wave
 from dataclasses import asdict, dataclass
@@ -704,7 +705,13 @@ def speed_up_audio_file(source: Path, speed: float) -> None:
 
 
 def prepare_fallback_tts_text(text: str) -> str:
-    prepared = " ".join(text.split())
+    prepared = unicodedata.normalize("NFC", " ".join(text.split()))
+    prepared = "".join(
+        char
+        for char in prepared
+        if not (unicodedata.category(char).startswith("M") and char == "\u0327")
+    )
+    prepared = prepared.replace("\u0327", "")
     replacements = {
         ". ": "... ",
         "! ": "! ... ",

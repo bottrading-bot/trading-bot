@@ -122,8 +122,8 @@ def default_config() -> dict[str, Any]:
         "assets_dir": os.getenv("ASSETS_DIR", "shorts_assets"),
         "output_dir": os.getenv("OUTPUT_DIR", "shorts_output"),
         "background_music_volume": float(os.getenv("BACKGROUND_MUSIC_VOLUME", "0.05")),
-        "voice_speed": float(os.getenv("VOICE_SPEED", "1.00")),
-        "voice_volume": float(os.getenv("VOICE_VOLUME", "1.85")),
+        "voice_speed": float(os.getenv("VOICE_SPEED", "1.04")),
+        "voice_volume": float(os.getenv("VOICE_VOLUME", "2.00")),
         "prefer_generated_gameplay": env_bool("PREFER_GENERATED_GAMEPLAY", False),
         "preferred_background_keyword": os.getenv("PREFERRED_BACKGROUND_KEYWORD", "minecraft").strip().lower(),
         "preferred_background_filename": os.getenv("PREFERRED_BACKGROUND_FILENAME", "").strip(),
@@ -131,6 +131,10 @@ def default_config() -> dict[str, Any]:
             "model_path": os.getenv("PIPER_MODEL_PATH", "").strip(),
             "config_path": os.getenv("PIPER_CONFIG_PATH", "").strip(),
             "data_dir": os.getenv("PIPER_DATA_DIR", "").strip(),
+            "length_scale": float(os.getenv("PIPER_LENGTH_SCALE", "0.92")),
+            "noise_scale": float(os.getenv("PIPER_NOISE_SCALE", "0.82")),
+            "noise_w_scale": float(os.getenv("PIPER_NOISE_W_SCALE", "1.10")),
+            "speaker_id": os.getenv("PIPER_SPEAKER_ID", "").strip(),
         },
         "upload": {
             "mode": os.getenv("UPLOAD_MODE", "manual")
@@ -664,7 +668,7 @@ def split_caption_chunks(text: str) -> list[str]:
         current.append(word)
         end_punctuation = word.endswith((".", "!", "?", ",", ":", ";"))
         cleaned_length = len(word.strip(".,!?;:"))
-        max_words = 1 if cleaned_length >= 6 else 2
+        max_words = 1
         if len(current) >= max_words or end_punctuation:
             chunks.append(" ".join(current))
             current = []
@@ -794,7 +798,7 @@ def generate_piper_tts(text: str, destination: Path, config: dict[str, Any]) -> 
         return False
 
     try:
-        from piper import PiperVoice
+        from piper import PiperVoice, SynthesisConfig
     except ImportError:
         return False
 
@@ -808,9 +812,24 @@ def generate_piper_tts(text: str, destination: Path, config: dict[str, Any]) -> 
         load_kwargs["espeak_data_dir"] = str(data_dir)
 
     voice = PiperVoice.load(**load_kwargs)
+    piper_cfg = config.get("piper_tts", {})
+    syn_config = SynthesisConfig(
+        volume=1.0,
+        length_scale=float(piper_cfg.get("length_scale", 0.92)),
+        noise_scale=float(piper_cfg.get("noise_scale", 0.82)),
+        noise_w_scale=float(piper_cfg.get("noise_w_scale", 1.10)),
+        normalize_audio=True,
+    )
+    speaker_id_raw = str(piper_cfg.get("speaker_id", "")).strip()
+    speaker_id = int(speaker_id_raw) if speaker_id_raw.isdigit() else None
 
     with wave.open(str(wav_path), "wb") as wav_file:
-        voice.synthesize_wav(prepare_fallback_tts_text(text), wav_file)
+        voice.synthesize_wav(
+            prepare_fallback_tts_text(text),
+            wav_file,
+            syn_config=syn_config,
+            speaker_id=speaker_id,
+        )
 
     if not wav_path.exists() or wav_path.stat().st_size <= 0:
         return False
@@ -833,19 +852,19 @@ def create_slide_image(text: str, config: dict[str, Any], destination: Path) -> 
         image.save(destination)
         return
 
-    font_size = min(320, max(220, width // 2))
+    font_size = min(420, max(280, int(width * 0.40)))
     caption_font = find_font(font_size, bold=True)
-    max_width = width - 28
+    max_width = width - 20
     lines = wrap_text(draw, display_text, caption_font, max_width)[:1]
 
-    while lines and any((draw.textbbox((0, 0), line, font=caption_font, stroke_width=16)[2] > max_width) for line in lines) and font_size > 150:
-        font_size -= 12
+    while lines and any((draw.textbbox((0, 0), line, font=caption_font, stroke_width=18)[2] > max_width) for line in lines) and font_size > 180:
+        font_size -= 14
         caption_font = find_font(font_size, bold=True)
         lines = wrap_text(draw, display_text, caption_font, max_width)[:1]
 
-    line_height = int(font_size * 0.94)
+    line_height = int(font_size * 0.90)
     block_height = len(lines) * line_height
-    y = int(height * 0.72) - block_height // 2
+    y = int(height * 0.78) - block_height // 2
 
     highlight_word = words[-1].strip(".,!?;:").lower()
 
@@ -855,33 +874,33 @@ def create_slide_image(text: str, config: dict[str, Any], destination: Path) -> 
         total_width = 0
 
         for word in line_words:
-            bbox = draw.textbbox((0, 0), word, font=caption_font, stroke_width=16)
+            bbox = draw.textbbox((0, 0), word, font=caption_font, stroke_width=18)
             word_width = bbox[2] - bbox[0]
             word_boxes.append((word, word_width))
             total_width += word_width
 
-        total_width += max(0, len(word_boxes) - 1) * int(font_size * 0.08)
+        total_width += max(0, len(word_boxes) - 1) * int(font_size * 0.06)
         x = (width - total_width) // 2
 
         for word, word_width in word_boxes:
             normalized = word.strip(".,!?;:").lower()
             fill = (255, 214, 64, 255) if normalized == highlight_word else (255, 255, 255, 255)
-            shadow_offset = max(8, font_size // 18)
+            shadow_offset = max(10, font_size // 16)
             draw.text(
                 (x + shadow_offset, y + shadow_offset),
                 word,
                 font=caption_font,
-                fill=(0, 0, 0, 190),
+                fill=(0, 0, 0, 210),
             )
             draw.text(
                 (x, y),
                 word,
                 font=caption_font,
                 fill=fill,
-                stroke_width=16,
+                stroke_width=18,
                 stroke_fill=(0, 0, 0, 240),
             )
-            x += word_width + int(font_size * 0.08)
+            x += word_width + int(font_size * 0.06)
 
         y += line_height
 

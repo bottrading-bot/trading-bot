@@ -705,13 +705,13 @@ def speed_up_audio_file(source: Path, speed: float) -> None:
 
 
 def prepare_fallback_tts_text(text: str) -> str:
-    prepared = unicodedata.normalize("NFC", " ".join(text.split()))
+    prepared = unicodedata.normalize("NFKD", " ".join(text.split()))
     prepared = "".join(
         char
         for char in prepared
-        if not (unicodedata.category(char).startswith("M") and char == "\u0327")
+        if not unicodedata.category(char).startswith("M")
     )
-    prepared = prepared.replace("\u0327", "")
+    prepared = unicodedata.normalize("NFC", prepared)
     replacements = {
         ". ": "... ",
         "! ": "! ... ",

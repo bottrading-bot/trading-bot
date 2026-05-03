@@ -12,6 +12,7 @@ import subprocess
 import sys
 import traceback
 import warnings
+import wave
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -125,11 +126,10 @@ def default_config() -> dict[str, Any]:
         "prefer_generated_gameplay": env_bool("PREFER_GENERATED_GAMEPLAY", False),
         "preferred_background_keyword": os.getenv("PREFERRED_BACKGROUND_KEYWORD", "minecraft").strip().lower(),
         "preferred_background_filename": os.getenv("PREFERRED_BACKGROUND_FILENAME", "").strip(),
-        "openai_tts": {
-            "api_key": os.getenv("OPENAI_API_KEY", "").strip(),
-            "model": os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
-            "voice": os.getenv("OPENAI_TTS_VOICE", "sage"),
-            "instructions": os.getenv("OPENAI_TTS_INSTRUCTIONS", "Speak in German like an emotional viral story narrator. Sound warm, human, dramatic, and expressive with clear emotional highs and lows. Use natural pauses, stronger emphasis on shocking moments, and avoid a flat or robotic tone."),
+        "piper_tts": {
+            "model_path": os.getenv("PIPER_MODEL_PATH", "").strip(),
+            "config_path": os.getenv("PIPER_CONFIG_PATH", "").strip(),
+            "data_dir": os.getenv("PIPER_DATA_DIR", "").strip(),
         },
         "upload": {
             "mode": os.getenv("UPLOAD_MODE", "manual")
@@ -663,7 +663,7 @@ def split_caption_chunks(text: str) -> list[str]:
         current.append(word)
         end_punctuation = word.endswith((".", "!", "?", ",", ":", ";"))
         cleaned_length = len(word.strip(".,!?;:"))
-        max_words = 1 if cleaned_length >= 9 else 2
+        max_words = 1 if cleaned_length >= 6 else 2
         if len(current) >= max_words or end_punctuation:
             chunks.append(" ".join(current))
             current = []
@@ -703,6 +703,65 @@ def speed_up_audio_file(source: Path, speed: float) -> None:
     temp_path.replace(source)
 
 
+def prepare_fallback_tts_text(text: str) -> str:
+    prepared = " ".join(text.split())
+    replacements = {
+        ". ": "... ",
+        "! ": "! ... ",
+        "? ": "? ... ",
+        ", aber ": ", ... aber ",
+        ", dann ": ", ... dann ",
+        ", und dann ": ", ... und dann ",
+        " plot twist ": " ... plot twist ... ",
+        " ploetzlich ": " ... ploetzlich ... ",
+        " auf einmal ": " ... auf einmal ... ",
+    }
+    for source, target in replacements.items():
+        prepared = prepared.replace(source, target)
+    return prepared
+
+
+def convert_audio_to_mp3(source: Path, destination: Path) -> None:
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    command = [
+        ffmpeg_exe,
+        "-y",
+        "-i",
+        str(source),
+        "-vn",
+        "-codec:a",
+        "libmp3lame",
+        "-b:a",
+        "160k",
+        str(destination),
+    ]
+    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def resolve_piper_model_paths(config: dict[str, Any]) -> tuple[Path, Path | None, Path | None] | None:
+    piper_cfg = config.get("piper_tts", {})
+    explicit_model = str(piper_cfg.get("model_path", "")).strip()
+    explicit_config = str(piper_cfg.get("config_path", "")).strip()
+    explicit_data_dir = str(piper_cfg.get("data_dir", "")).strip()
+
+    if explicit_model:
+        model_path = Path(explicit_model)
+        config_path = Path(explicit_config) if explicit_config else Path(f"{explicit_model}.json")
+        data_dir = Path(explicit_data_dir) if explicit_data_dir else None
+        return model_path, config_path, data_dir
+
+    voices_dir = Path(config.get("assets_dir", "shorts_assets")) / "voices" / "piper"
+    if not voices_dir.exists():
+        return None
+
+    models = sorted(file for file in voices_dir.glob("*.onnx") if file.is_file())
+    if not models:
+        return None
+
+    model_path = models[0]
+    config_path = Path(f"{model_path}.json")
+    return model_path, config_path, voices_dir
+
 @contextlib.contextmanager
 def suppress_media_noise():
     with (
@@ -714,32 +773,38 @@ def suppress_media_noise():
         yield
 
 
-def generate_openai_tts(text: str, destination: Path, config: dict[str, Any]) -> bool:
-    openai_cfg = config.get("openai_tts", {})
-    api_key = str(openai_cfg.get("api_key", "")).strip()
-    if not api_key:
+def generate_piper_tts(text: str, destination: Path, config: dict[str, Any]) -> bool:
+    resolved = resolve_piper_model_paths(config)
+    if not resolved:
         return False
 
-    response = requests.post(
-        "https://api.openai.com/v1/audio/speech",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": openai_cfg.get("model", "gpt-4o-mini-tts"),
-            "voice": openai_cfg.get("voice", "sage"),
-            "input": text[:4096],
-            "instructions": openai_cfg.get(
-                "instructions",
-                "Speak in German like an emotional viral story narrator. Sound warm, human, dramatic, and expressive with clear emotional highs and lows. Use natural pauses, stronger emphasis on shocking moments, and avoid a flat or robotic tone.",
-            ),
-            "response_format": "mp3",
-        },
-        timeout=300,
+    model_path, config_path, data_dir = resolved
+    if not model_path.exists():
+        return False
+    if config_path and not config_path.exists():
+        return False
+
+    try:
+        from piper import PiperVoice
+    except ImportError:
+        return False
+
+    wav_path = destination.with_suffix(".wav")
+    voice = PiperVoice.load(
+        model_path=str(model_path),
+        config_path=str(config_path) if config_path else None,
+        espeak_data_dir=str(data_dir) if data_dir else None,
     )
-    response.raise_for_status()
-    destination.write_bytes(response.content)
+
+    with wave.open(str(wav_path), "wb") as wav_file:
+        voice.synthesize_wav(prepare_fallback_tts_text(text), wav_file)
+
+    if not wav_path.exists() or wav_path.stat().st_size <= 0:
+        return False
+
+    convert_audio_to_mp3(wav_path, destination)
+    with contextlib.suppress(FileNotFoundError):
+        wav_path.unlink()
     return destination.exists() and destination.stat().st_size > 0
 
 
@@ -755,19 +820,19 @@ def create_slide_image(text: str, config: dict[str, Any], destination: Path) -> 
         image.save(destination)
         return
 
-    font_size = min(196, max(138, width // 3))
+    font_size = min(240, max(164, width // 2))
     caption_font = find_font(font_size, bold=True)
-    max_width = width - 56
-    lines = wrap_text(draw, display_text, caption_font, max_width)[:2]
+    max_width = width - 42
+    lines = wrap_text(draw, display_text, caption_font, max_width)[:1]
 
-    while lines and any((draw.textbbox((0, 0), line, font=caption_font, stroke_width=12)[2] > max_width) for line in lines) and font_size > 110:
-        font_size -= 8
+    while lines and any((draw.textbbox((0, 0), line, font=caption_font, stroke_width=14)[2] > max_width) for line in lines) and font_size > 120:
+        font_size -= 10
         caption_font = find_font(font_size, bold=True)
-        lines = wrap_text(draw, display_text, caption_font, max_width)[:2]
+        lines = wrap_text(draw, display_text, caption_font, max_width)[:1]
 
-    line_height = int(font_size * 1.02)
+    line_height = int(font_size * 0.98)
     block_height = len(lines) * line_height
-    y = int(height * 0.67) - block_height // 2
+    y = int(height * 0.72) - block_height // 2
 
     highlight_word = words[-1].strip(".,!?;:").lower()
 
@@ -777,33 +842,33 @@ def create_slide_image(text: str, config: dict[str, Any], destination: Path) -> 
         total_width = 0
 
         for word in line_words:
-            bbox = draw.textbbox((0, 0), word, font=caption_font, stroke_width=12)
+            bbox = draw.textbbox((0, 0), word, font=caption_font, stroke_width=14)
             word_width = bbox[2] - bbox[0]
             word_boxes.append((word, word_width))
             total_width += word_width
 
-        total_width += max(0, len(word_boxes) - 1) * int(font_size * 0.12)
+        total_width += max(0, len(word_boxes) - 1) * int(font_size * 0.10)
         x = (width - total_width) // 2
 
         for word, word_width in word_boxes:
             normalized = word.strip(".,!?;:").lower()
             fill = (255, 214, 64, 255) if normalized == highlight_word else (255, 255, 255, 255)
-            shadow_offset = max(5, font_size // 22)
+            shadow_offset = max(6, font_size // 20)
             draw.text(
                 (x + shadow_offset, y + shadow_offset),
                 word,
                 font=caption_font,
-                fill=(0, 0, 0, 165),
+                fill=(0, 0, 0, 180),
             )
             draw.text(
                 (x, y),
                 word,
                 font=caption_font,
                 fill=fill,
-                stroke_width=12,
-                stroke_fill=(0, 0, 0, 235),
+                stroke_width=14,
+                stroke_fill=(0, 0, 0, 240),
             )
-            x += word_width + int(font_size * 0.12)
+            x += word_width + int(font_size * 0.10)
 
         y += line_height
 
@@ -814,17 +879,17 @@ async def generate_voiceover(text: str, language: str, destination: Path, config
     engine = os.getenv("TTS_ENGINE", "auto").strip().lower()
     voice_speed = float(config.get("voice_speed", 1.00))
 
-    if engine in {"auto", "openai"}:
+    if engine in {"auto", "piper"}:
         try:
-            print("Erzeuge Voiceover mit OpenAI TTS...", flush=True)
-            created = await asyncio.to_thread(generate_openai_tts, text, destination, config)
+            print("Erzeuge Voiceover mit Piper TTS...", flush=True)
+            created = await asyncio.to_thread(generate_piper_tts, text, destination, config)
             if created:
                 speed_up_audio_file(destination, voice_speed)
-                print("OpenAI TTS Voiceover erfolgreich erstellt.", flush=True)
+                print("Piper TTS Voiceover erfolgreich erstellt.", flush=True)
                 return
         except Exception as error:
-            print(f"OpenAI TTS fehlgeschlagen: {error}", flush=True)
-            if engine == "openai":
+            print(f"Piper TTS fehlgeschlagen: {error}", flush=True)
+            if engine == "piper":
                 print("Nutze stattdessen Edge TTS oder gTTS...", flush=True)
 
     if engine in {"auto", "edge"}:
@@ -855,7 +920,7 @@ async def generate_voiceover(text: str, language: str, destination: Path, config
     print("Erzeuge Voiceover mit gTTS...", flush=True)
 
     def create_gtts_voice() -> None:
-        tts = gTTS(text=text, lang=language or "de", slow=False)
+        tts = gTTS(text=prepare_fallback_tts_text(text), lang=language or "de", slow=False)
         tts.save(str(destination))
 
     await asyncio.to_thread(create_gtts_voice)

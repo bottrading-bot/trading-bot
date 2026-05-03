@@ -797,39 +797,27 @@ def generate_piper_tts(text: str, destination: Path, config: dict[str, Any]) -> 
     if config_path and not config_path.exists():
         return False
 
-    try:
-        from piper import PiperVoice, SynthesisConfig
-    except ImportError:
-        return False
-
     wav_path = destination.with_suffix(".wav")
-    load_kwargs: dict[str, Any] = {
-        "model_path": str(model_path),
-    }
-    if config_path:
-        load_kwargs["config_path"] = str(config_path)
-    if data_dir:
-        load_kwargs["espeak_data_dir"] = str(data_dir)
-
-    voice = PiperVoice.load(**load_kwargs)
     piper_cfg = config.get("piper_tts", {})
-    syn_config = SynthesisConfig(
-        volume=1.0,
-        length_scale=float(piper_cfg.get("length_scale", 0.92)),
-        noise_scale=float(piper_cfg.get("noise_scale", 0.82)),
-        noise_w_scale=float(piper_cfg.get("noise_w_scale", 1.10)),
-        normalize_audio=True,
-    )
-    speaker_id_raw = str(piper_cfg.get("speaker_id", "")).strip()
-    speaker_id = int(speaker_id_raw) if speaker_id_raw.isdigit() else None
+    prepared_text = prepare_fallback_tts_text(text)
+    command = [
+        sys.executable,
+        "-m",
+        "piper",
+        "-m",
+        str(model_path),
+        "-f",
+        str(wav_path),
+    ]
+    if data_dir:
+        command.extend(["--data-dir", str(data_dir)])
 
-    with wave.open(str(wav_path), "wb") as wav_file:
-        voice.synthesize_wav(
-            prepare_fallback_tts_text(text),
-            wav_file,
-            syn_config=syn_config,
-            speaker_id=speaker_id,
-        )
+    speaker_id_raw = str(piper_cfg.get("speaker_id", "")).strip()
+    if speaker_id_raw.isdigit():
+        command.extend(["--speaker", speaker_id_raw])
+
+    command.extend(["--", prepared_text])
+    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     if not wav_path.exists() or wav_path.stat().st_size <= 0:
         return False

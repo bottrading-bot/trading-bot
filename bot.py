@@ -748,6 +748,8 @@ def resolve_piper_model_paths(config: dict[str, Any]) -> tuple[Path, Path | None
         model_path = Path(explicit_model)
         config_path = Path(explicit_config) if explicit_config else Path(f"{explicit_model}.json")
         data_dir = Path(explicit_data_dir) if explicit_data_dir else None
+        if data_dir and not (data_dir / "phontab").exists():
+            data_dir = None
         return model_path, config_path, data_dir
 
     voices_dir = Path(config.get("assets_dir", "shorts_assets")) / "voices" / "piper"
@@ -760,7 +762,7 @@ def resolve_piper_model_paths(config: dict[str, Any]) -> tuple[Path, Path | None
 
     model_path = models[0]
     config_path = Path(f"{model_path}.json")
-    return model_path, config_path, voices_dir
+    return model_path, config_path, None
 
 @contextlib.contextmanager
 def suppress_media_noise():

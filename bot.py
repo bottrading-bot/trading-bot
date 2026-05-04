@@ -1547,16 +1547,41 @@ def choose_background_file(candidates: list[Path], state: dict[str, Any] | None 
 
     return random.choice(candidates)
 
-def pick_background_video(config: dict[str, Any], package: VideoPackage, state: dict[str, Any] | None = None) -> Path | None:
+
+def choose_background_files(
+    candidates: list[Path],
+    desired_count: int,
+    state: dict[str, Any] | None = None,
+) -> list[Path]:
+    if not candidates:
+        return []
+
+    pool = list(candidates)
+    random.shuffle(pool)
+
+    last_background = ""
+    if state is not None:
+        last_background = str(state.get("last_background_path", "")).strip().lower()
+
+    if len(pool) > 1 and last_background:
+        filtered = [candidate for candidate in pool if candidate.as_posix().lower() != last_background]
+        if filtered:
+            pool = filtered
+
+    desired_count = max(1, min(desired_count, len(pool)))
+    return pool[:desired_count]
+
+
+def pick_background_videos(config: dict[str, Any], package: VideoPackage, state: dict[str, Any] | None = None) -> list[Path]:
     if bool(config.get("prefer_generated_gameplay", True)):
         print("Externe Gameplay-Clips deaktiviert. Nutze generated gameplay.", flush=True)
-        return None
+        return []
 
     backgrounds_dir = Path(config["assets_dir"]) / "backgrounds"
 
     if not backgrounds_dir.exists():
         print(f"Background-Ordner nicht gefunden: {backgrounds_dir}", flush=True)
-        return None
+        return []
 
     profile = detect_gameplay_profile(package)
     allowed = {".mp4", ".mov", ".m4v"}
@@ -1569,16 +1594,17 @@ def pick_background_video(config: dict[str, Any], package: VideoPackage, state: 
 
     if not files:
         print(f"Keine Background-Dateien gefunden in: {backgrounds_dir}", flush=True)
-        return None
+        return []
 
     print(f"Gefundene Background-Dateien: {len(files)}", flush=True)
+    desired_count = max(1, min(env_int("BACKGROUND_CLIPS_PER_VIDEO", 3), len(files)))
 
     forced_filename = str(config.get("preferred_background_filename", "")).strip().lower()
     if forced_filename:
         exact_matches = [file for file in files if file.name.lower() == forced_filename]
         if exact_matches:
-            chosen = choose_background_file(exact_matches, state)
-            print(f"Erzwinge exakten Background: {chosen.name}", flush=True)
+            chosen = choose_background_files(exact_matches, desired_count, state)
+            print(f"Erzwinge exakten Background: {', '.join(item.name for item in chosen)}", flush=True)
             return chosen
         print(f"Kein exakter Clip gefunden fuer Dateiname: {forced_filename}", flush=True)
 
@@ -1586,8 +1612,8 @@ def pick_background_video(config: dict[str, Any], package: VideoPackage, state: 
     if forced_keyword:
         forced_matches = [file for file in files if forced_keyword in file.name.lower()]
         if forced_matches:
-            chosen = choose_background_file(forced_matches, state)
-            print(f"Erzwinge Background per Keyword '{forced_keyword}': {chosen.name}", flush=True)
+            chosen = choose_background_files(forced_matches, desired_count, state)
+            print(f"Erzwinge Background per Keyword '{forced_keyword}': {', '.join(item.name for item in chosen)}", flush=True)
             return chosen
         print(f"Kein Clip mit Keyword '{forced_keyword}' gefunden.", flush=True)
 
@@ -1606,13 +1632,13 @@ def pick_background_video(config: dict[str, Any], package: VideoPackage, state: 
             preferred.append(file)
 
     if preferred:
-        chosen = choose_background_file(preferred, state)
-        print(f"Passender Background gefunden fuer Profil '{profile}': {chosen.name}", flush=True)
+        chosen = choose_background_files(preferred, desired_count, state)
+        print(f"Passender Background gefunden fuer Profil '{profile}': {', '.join(item.name for item in chosen)}", flush=True)
         return chosen
     else:
         print(f"Kein Profil-Match fuer '{profile}', nehme zufaelligen Clip.", flush=True)
 
-    return choose_background_file(files, state)
+    return choose_background_files(files, desired_count, state)
 
 
 def draw_generated_gameplay_frame(
@@ -1994,7 +2020,7 @@ def render_video(
     project_dir: Path,
     narration_path: Path,
     caption_cues: list[CaptionCue],
-    background_video_path: Path | None = None,
+    background_video_paths: list[Path] | None = None,
 ) -> Path:
     width = int(config.get("width", 1080))
     height = int(config.get("height", 1920))
@@ -2020,46 +2046,56 @@ def render_video(
     total_duration = target_duration
     print("Baue Caption Overlays...", flush=True)
 
-    if background_video_path:
-        print(f"Gameplay Background gefunden: {background_video_path}", flush=True)
+    if background_video_paths:
+        print(f"Gameplay Backgrounds gefunden: {', '.join(str(path) for path in background_video_paths)}", flush=True)
+
+        frame_guard = 1 / max(int(config.get("fps", 24)), 24)
+        target_ratio = width / height
+        clip_count = max(1, len(background_video_paths))
+        segment_duration = total_duration / clip_count
+        assembled_backgrounds = []
+
+        for background_video_path in background_video_paths:
+            with suppress_media_noise():
+                bg = VideoFileClip(str(background_video_path))
+
+            safe_bg_duration = max(0.25, float(bg.duration) - frame_guard)
+            bg_ratio = bg.w / bg.h
+
+            if bg_ratio > target_ratio:
+                bg = bg.resized(height=height)
+                x_center = bg.w / 2
+                bg = bg.cropped(
+                    x_center=x_center,
+                    width=width,
+                    height=height,
+                )
+            else:
+                bg = bg.resized(width=width)
+                y_center = bg.h / 2
+                bg = bg.cropped(
+                    y_center=y_center,
+                    width=width,
+                    height=height,
+                )
+
+            if safe_bg_duration < bg.duration:
+                bg = bg.subclipped(0, safe_bg_duration)
+
+            if bg.duration > segment_duration + 0.5:
+                max_start = max(0.0, float(bg.duration) - segment_duration)
+                start_offset = random.uniform(0.0, max_start)
+                bg = bg.subclipped(start_offset, start_offset + segment_duration)
+            elif bg.duration < segment_duration:
+                loops = int(segment_duration // bg.duration) + 1
+                with suppress_media_noise():
+                    bg = concatenate_videoclips([bg.copy() for _ in range(loops)], method="compose")
+
+            bg = bg.subclipped(0, min(segment_duration, float(bg.duration))).with_volume_scaled(0)
+            assembled_backgrounds.append(bg)
 
         with suppress_media_noise():
-            bg = VideoFileClip(str(background_video_path))
-        frame_guard = 1 / max(int(config.get("fps", 24)), 24)
-        safe_bg_duration = max(0.25, float(bg.duration) - frame_guard)
-
-        bg_ratio = bg.w / bg.h
-        target_ratio = width / height
-
-        if bg_ratio > target_ratio:
-            bg = bg.resized(height=height)
-            x_center = bg.w / 2
-            bg = bg.cropped(
-                x_center=x_center,
-                width=width,
-                height=height,
-            )
-        else:
-            bg = bg.resized(width=width)
-            y_center = bg.h / 2
-            bg = bg.cropped(
-                y_center=y_center,
-                width=width,
-                height=height,
-            )
-
-        if safe_bg_duration < bg.duration:
-            bg = bg.subclipped(0, safe_bg_duration)
-
-        if bg.duration > total_duration + 0.5:
-            max_start = max(0.0, float(bg.duration) - total_duration)
-            start_offset = random.uniform(0.0, max_start)
-            bg = bg.subclipped(start_offset, start_offset + total_duration)
-        elif bg.duration < total_duration:
-            loops = int(total_duration // bg.duration) + 1
-            with suppress_media_noise():
-                bg = concatenate_videoclips([bg.copy() for _ in range(loops)], method="compose")
-
+            bg = concatenate_videoclips(assembled_backgrounds, method="compose")
         bg = bg.subclipped(0, min(total_duration, float(bg.duration))).with_volume_scaled(0)
 
     else:
@@ -2462,9 +2498,9 @@ async def build_single_video(config: dict[str, Any], niche: dict[str, Any], stat
     log_background_inventory(config)
 
     project_dir = ensure_directory(output_dir / build_project_slug(package))
-    background_video_path = pick_background_video(config, package, state)
-    if background_video_path:
-        state["last_background_path"] = background_video_path.as_posix()
+    background_video_paths = pick_background_videos(config, package, state)
+    if background_video_paths:
+        state["last_background_path"] = background_video_paths[-1].as_posix()
 
     narration_path = await build_narration_audio(package, config, project_dir)
     caption_cues = build_caption_cues_from_transcription(narration_path, config)
@@ -2472,7 +2508,7 @@ async def build_single_video(config: dict[str, Any], niche: dict[str, Any], stat
         caption_cues = build_caption_cues(package)
     write_project_files(package, project_dir, caption_cues)
 
-    video_path = render_video(package, config, project_dir, narration_path, caption_cues, background_video_path)
+    video_path = render_video(package, config, project_dir, narration_path, caption_cues, background_video_paths)
 
     recent_topics = state.setdefault("recent_topics", [])
     recent_topics.append(package.title.split("| Part")[0].strip())

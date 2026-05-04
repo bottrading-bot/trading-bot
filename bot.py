@@ -15,7 +15,7 @@ import unicodedata
 import warnings
 import wave
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -129,6 +129,8 @@ def default_config() -> dict[str, Any]:
         "height": env_int("VIDEO_HEIGHT", 1920),
         "fps": env_int("FPS", 24),
         "videos_per_run": max(1, env_int("VIDEOS_PER_RUN", 1)),
+        "followup_delay_minutes": max(1, env_int("FOLLOWUP_DELAY_MINUTES", 120)),
+        "followup_enabled": env_bool("FOLLOWUP_ENABLED", True),
         "assets_dir": os.getenv("ASSETS_DIR", "shorts_assets"),
         "output_dir": os.getenv("OUTPUT_DIR", "shorts_output"),
         "background_music_volume": float(os.getenv("BACKGROUND_MUSIC_VOLUME", "0.05")),
@@ -316,6 +318,198 @@ def normalize_durations(segments: list[Segment], target_seconds: float) -> list[
         )
         for segment in segments
     ]
+
+
+def story_series_templates() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "mother_alive",
+            "title": "Mein Vater sagte mir 18 Jahre lang, meine Mutter sei tot",
+            "part1": [
+                ("Warte bis zum Ende", "Mein Vater sagte mir 18 Jahre lang, meine Mutter sei tot. Dann stand sie ploetzlich auf meiner Hochzeit."),
+                ("Alles wirkte normal", "Ich war gerade dabei, mich fertigzumachen, als meine Trauzeugin komplett still wurde und nur noch zur letzten Reihe starrte."),
+                ("Dann sah ich sie", "Da sass eine Frau, die aussah wie eine aeltere Version von mir. Gleiche Augen, gleiches Lachen, sogar dieselbe kleine Narbe am Kinn."),
+                ("Mein Vater rastete aus", "Als ich meinen Vater fragte, wer diese Frau ist, liess er sein Glas fallen und sagte, ich solle sofort weg von ihr."),
+                ("Meine Oma griff ein", "Meine Oma zog mich zur Seite und sagte nur: Frag ihn, was damals im Krankenhaus passiert ist. Danach wusste ich, dass alles gelogen war."),
+                ("Der erste Beweis", "Spaeter drueckte mir die fremde Frau einen Umschlag in die Hand. Darin war mein Baby-Armband aus dem Krankenhaus mit ihrem Nachnamen."),
+                ("Die Wahrheit begann", "In diesem Moment verstand ich, dass meine Mutter nie tot war und dass mein Vater mir mein ganzes Leben lang nur seine Version erzaehlt hatte."),
+                ("Part 2 kommt", "In Part 2 erzaehle ich dir, warum mein Vater meine Mutter aus meinem Leben geloescht hat und wer ihm dabei geholfen hat."),
+            ],
+            "part2": [
+                ("Part 2", "Nachdem die Hochzeit vorbei war, traf ich meine Mutter heimlich in einem kleinen Cafe ausserhalb der Stadt."),
+                ("Ihre Version", "Sie zeigte mir alte Briefe, Fotos und sogar Einschreiben, die sie jedes Jahr an mich geschickt hatte. Kein einziger hatte mich jemals erreicht."),
+                ("Der eigentliche Grund", "Dann erzaehlte sie mir, dass mein Vater damals Schulden hatte und Angst hatte, ich koennte bei ihr bleiben, wenn sie ihn verlaesst."),
+                ("Es wurde noch schlimmer", "Meine Oma gab zu, dass sie ihm anfangs geholfen hatte, weil sie dachte, ein Kind braucht ein stabiles Zuhause, egal wie die Wahrheit aussieht."),
+                ("Der krasseste Beweis", "Im letzten Ordner lag ein Gerichtsbeschluss, den mein Vater absichtlich nie umgesetzt hatte. Meine Mutter haette mich offiziell sehen duerfen."),
+                ("Konfrontation", "Als ich meinen Vater damit konfrontierte, sagte er nicht einmal Sorry. Er sagte nur, er wuerde es wieder genauso machen."),
+                ("Was ich getan habe", "Ich habe die Feier mit meiner Mutter verlassen und meinem Vater noch in derselben Nacht gesagt, dass er mich als Tochter verloren hat."),
+                ("Das Ende", "Heute kenne ich endlich die Wahrheit, aber ich weiss bis heute nicht, ob mich mehr verletzt hat, dass mein Vater gelogen hat oder dass meine Oma ihm half."),
+            ],
+        },
+        {
+            "id": "sister_baby",
+            "title": "Meine Schwester wollte mir mein Baby wegnehmen",
+            "part1": [
+                ("Harte Story", "Meine Schwester tat so, als wuerde sie mir helfen. In Wirklichkeit wollte sie mir mein Baby wegnehmen."),
+                ("Am Anfang", "Ich war im siebten Monat schwanger und sie war ploetzlich jeden einzelnen Tag bei mir, obwohl wir vorher kaum Kontakt hatten."),
+                ("Erst wirkte sie perfekt", "Sie kochte, putzte, begleitete mich zu Terminen und sagte allen, sie wolle einfach nur die beste Tante der Welt werden."),
+                ("Dann wurde es komisch", "Immer oefter hoerte ich, wie sie meiner Mutter erzaehlte, ich sei ueberfordert, emotional labil und eigentlich gar nicht bereit fuer ein Kind."),
+                ("Der erste Schock", "Eines Tages fragte mich meine Mutter ganz ernst, ob meine Schwester das Baby vielleicht besser grossziehen koennte, bis ich stabiler bin."),
+                ("Der Beweis", "Spaeter fand ich in ihrer Tasche Unterlagen von einem Familienanwalt und handschriftliche Notizen darueber, wie sie meiner Familie mich ausreden wollte."),
+                ("Mir wurde alles klar", "Da verstand ich, dass sie nicht helfen wollte. Sie wollte beweisen, dass ich als Mutter ungeeignet bin."),
+                ("Part 2 kommt", "In Part 2 erzaehle ich dir, was bei der Geburt passiert ist und warum meine Familie fast wirklich auf ihrer Seite war."),
+            ],
+            "part2": [
+                ("Part 2", "Als die Wehen losgingen, war ausgerechnet meine Schwester die Erste im Krankenhaus und tat so, als wuerde ohne sie alles zusammenbrechen."),
+                ("Sie zog alle auf ihre Seite", "Sie sprach mit den Schwestern, mit meiner Mutter und sogar mit meinem Freund und stellte sich ueberall als die Vernuenftige dar."),
+                ("Der schlimmste Moment", "Kurz nach der Geburt hoerte ich auf dem Flur, wie sie sagte, dass das Baby besser erstmal nicht allein bei mir bleiben sollte."),
+                ("Ich dachte, ich werde verrueckt", "Ich war muede, hatte Schmerzen und wusste in dem Moment nicht mehr, wem ich noch trauen konnte."),
+                ("Meine Rettung", "Zum Glueck hatte eine Hebamme mitbekommen, wie meine Schwester schon Tage vorher versucht hatte, Auskuenfte ueber mich zu bekommen."),
+                ("Alles flog auf", "Sie meldete das der Stationsleitung und ploetzlich kamen die Anwaltsunterlagen, die Notizen und mehrere Nachrichten meiner Schwester ans Licht."),
+                ("Die Familie drehte sich", "Als endlich alle begriffen, dass meine Schwester die Situation geplant hatte, wollte meine Mutter sofort mit mir nach Hause und nichts mehr von ihr wissen."),
+                ("Das Ende", "Heute ist meine Schwester komplett aus unserem Leben raus, aber ich werde nie vergessen, wie nah sie daran war, mir mein eigenes Kind zu nehmen."),
+            ],
+        },
+        {
+            "id": "new_man_secret",
+            "title": "Der neue Mann meiner Mutter kannte mein Geheimnis",
+            "part1": [
+                ("Storytime", "Der neue Freund meiner Mutter war genau zehn Minuten da, als er mir mein dunkelstes Geheimnis ins Ohr fluesterte."),
+                ("Am Anfang", "Meine Mutter war seit Jahren allein, also habe ich wirklich versucht, ihn nett zu finden und ihr das Glueck zu goennen."),
+                ("Er war zu perfekt", "Er brachte Blumen mit, war charmant und sagte genau die Dinge, die jede Mutter hoeren will, wenn sie frisch verliebt ist."),
+                ("Dann kam dieser Blick", "Immer wenn meine Mutter kurz den Raum verliess, schaute er mich an, als wuerde er schon alles ueber mich wissen."),
+                ("Der Satz", "Dann sagte er ganz leise: Ich weiss, was du mit siebzehn getan hast. Mir blieb in dem Moment wirklich die Luft weg."),
+                ("Ich konnte nichts sagen", "Meine Mutter kam zurueck, setzte sich zu uns und hatte keine Ahnung, dass ich am liebsten sofort weggelaufen waere."),
+                ("Mir wurde schlecht", "Ich wusste, dass dieses Geheimnis nur drei Menschen kannten und zwei davon hatten seit Jahren kein Wort mehr mit mir gesprochen."),
+                ("Part 2 kommt", "In Part 2 erzaehle ich dir, wer dieser Mann wirklich war und warum meine Mutter die Wahrheit schon laenger kannte als ich dachte."),
+            ],
+            "part2": [
+                ("Part 2", "Noch in derselben Nacht habe ich in alten Fotos und Unterlagen gesucht und ploetzlich sein Gesicht auf einem Bild von vor zehn Jahren wiedergefunden."),
+                ("Die Verbindung", "Er war der Bruder von der Person, wegen der ich damals meine Heimatstadt verlassen musste und ueber die meine Mutter nie wieder reden wollte."),
+                ("Dann kam der Hammer", "Als ich meine Mutter am naechsten Morgen zur Rede stellte, sagte sie nicht: Was redest du da. Sie sagte nur: Ich wollte es dir spaeter erklaeren."),
+                ("Sie wusste es", "Meine Mutter hatte die ganze Zeit gewusst, wer er ist. Sie hatte mir nur nichts gesagt, weil sie dachte, die Vergangenheit sei endlich vorbei."),
+                ("Warum er da war", "Er sagte, er sei nicht gekommen, um sich zu raechen, sondern um herauszufinden, ob ich jemals die Wahrheit ueber damals sagen wuerde."),
+                ("Die Wahrheit", "Dann erfuhr ich, dass ich mit siebzehn gar nicht die ganze Geschichte kannte und dass meine Mutter mir den wichtigsten Teil verschwiegen hatte."),
+                ("Alles brach zusammen", "In zwei Stunden erfuhr ich mehr ueber meine Familie als in den zehn Jahren davor zusammen."),
+                ("Das Ende", "Heute weiss ich zwar die Wahrheit, aber ich haette fast meine Mutter verloren, nur weil sie dachte, Schweigen waere der bessere Schutz."),
+            ],
+        },
+        {
+            "id": "brother_returned",
+            "title": "Mein Bruder kam nach 12 Jahren zurueck",
+            "part1": [
+                ("Warte kurz", "Mein Bruder verschwand, als ich neun war. Zwoelf Jahre spaeter stand er wieder vor unserer Tuer."),
+                ("Ich erkannte ihn sofort", "Er sah kaputt aus, viel aelter als er war, aber seine Augen waren genau dieselben wie frueher."),
+                ("Meine Mutter brach zusammen", "Sie fing sofort an zu weinen, doch mein Vater wurde nicht emotional. Er wurde panisch und wollte sofort die Polizei rufen."),
+                ("Das war seltsam", "Wenn mein Bruder wirklich nur abgehauen waere, warum hatte mein Vater dann mehr Angst als Freude?"),
+                ("Der Umschlag", "Mein Bruder legte einen Umschlag auf den Tisch und sagte: Wenn ich heute nochmal verschwinde, mach den auf."),
+                ("Keiner verstand etwas", "Meine Mutter flehte ihn an zu bleiben, waehrend mein Vater nur noch schrie, dass er endlich verschwinden soll."),
+                ("Mir war klar", "In diesem Moment wusste ich, dass meine Eltern mich mein ganzes Leben lang ueber sein Verschwinden belogen hatten."),
+                ("Part 2 kommt", "In Part 2 erzaehle ich dir, was im Umschlag war und warum das alles am Ende mit mir zu tun hatte."),
+            ],
+            "part2": [
+                ("Part 2", "Als mein Bruder am Morgen wieder weg war, machte ich den Umschlag auf und mein ganzes Weltbild brach in sich zusammen."),
+                ("Die Beweise", "Darin waren alte Briefe, Kontoauszuege und ein Schreiben, das beweisen sollte, dass mein Vater meinen Bruder damals selbst ausser Landes gebracht hatte."),
+                ("Warum?", "Zuerst dachte ich, es ging um Geld oder Schulden. Aber dann sah ich meinen eigenen Namen auf mehreren Unterlagen."),
+                ("Der eigentliche Grund", "Mein Bruder hatte herausgefunden, dass ich gar nicht das leibliche Kind meines Vaters war und dass mein Vater Angst hatte, ich wuerde es irgendwann erfahren."),
+                ("Er musste weg", "Weil mein Bruder die Wahrheit kannte und drohte, sie mir zu sagen, wurde er aus der Familie entfernt und alle taten spaeter so, als sei er einfach abgehauen."),
+                ("Meine Mutter zerbrach", "Sie gab zu, dass sie damals zu schwach war, sich gegen meinen Vater zu stellen, und hoffte, mein Bruder wuerde eines Tages alleine zurueckkommen."),
+                ("Die Konfrontation", "Als ich meinen Vater fragte, ob das stimmt, sagte er nur: Ich wollte unsere Familie schuetzen. Damit hatte er alles bestaetigt."),
+                ("Das Ende", "Seitdem weiss ich, dass mein Bruder nie verschwunden ist. Er wurde geopfert, damit ich still und ahnungslos in dieser Familie bleibe."),
+            ],
+        },
+        {
+            "id": "brothers_wife",
+            "title": "Die Frau meines Bruders war nicht die, fuer die sie sich ausgab",
+            "part1": [
+                ("Storytime", "Mein Bruder heiratete die perfekte Frau. Drei Monate spaeter fand ich raus, dass nicht mal ihr Name echt war."),
+                ("Alles wirkte normal", "Sie war ruhig, freundlich und hatte immer genau die richtige Antwort. Jeder in der Familie mochte sie sofort."),
+                ("Nur ein Mensch nicht", "Meine kleine Nichte hatte panische Angst vor ihr. Immer wenn sie den Raum betrat, wurde das Kind sofort still."),
+                ("Erst glaubte ich es nicht", "Ich dachte, meine Nichte uebertreibt oder ist einfach eifersuechtig, weil sich ploetzlich alles um diese neue Frau drehte."),
+                ("Die Nachricht", "Dann schickte mir meine Nichte nachts eine Sprachnachricht und fluesterte: Bitte sag Papa, dass sie nicht meine Mama ersetzen darf."),
+                ("Der zweite Satz", "Danach sagte sie etwas, das mir den Schlaf raubte: Sie hat gesagt, sonst passiert Oma etwas."),
+                ("Jetzt war klar", "Ab da wusste ich, dass mit dieser Frau etwas ganz und gar nicht stimmt und dass sie in unserem Haus etwas spielt."),
+                ("Part 2 kommt", "In Part 2 erzaehle ich dir, wie ich ihre wahre Identitaet gefunden habe und warum sie am Morgen danach verschwunden war."),
+            ],
+            "part2": [
+                ("Part 2", "Am naechsten Morgen begann ich jeden Namen, jedes Foto und jede alte Spur dieser Frau im Internet zu suchen."),
+                ("Nichts passte", "Unter ihrem Namen gab es keine Schule, keinen alten Arbeitsplatz und nicht mal ein einziges echtes Social-Media-Profil."),
+                ("Das alte Foto", "Erst als ich ein verschwommenes Foto rueckwaerts suchte, landete ich bei einer Vermisstenmeldung mit einem fast identischen Gesicht."),
+                ("Die Wahrheit", "Diese Frau hatte nicht nur einen falschen Namen. Sie war schon vor Jahren unter komplett anderer Identitaet gesucht worden."),
+                ("Mein Bruder glaubte mir nicht", "Als ich ihm alles zeigte, dachte er erst, ich wolle nur seine Ehe zerstoeren. Doch dann fehlten ploetzlich Geld, Schmuck und mehrere Dokumente."),
+                ("Die Flucht", "Am selben Abend war sie weg. Kein Anruf, keine Nachricht, nur ein leerer Schrank und ein Zettel mit meinem Namen."),
+                ("Was auf dem Zettel stand", "Darauf stand nur: Du haettest frueher aufhoeren sollen zu suchen. Da wusste ich, dass sie mich die ganze Zeit beobachtet hatte."),
+                ("Das Ende", "Heute ist mein Bruder geschieden und meine Nichte schlief erst Wochen spaeter wieder ruhig, aber wir wissen bis heute nicht, wer diese Frau wirklich war."),
+            ],
+        },
+        {
+            "id": "grandma_inheritance",
+            "title": "Meine Oma vererbte alles einer Fremden",
+            "part1": [
+                ("Unglaublich", "Nach dem Tod meiner Oma dachte jeder, meine Mutter bekommt das Haus. Stattdessen ging alles an eine Fremde."),
+                ("Die Stimmung war komisch", "Schon bei der Testamentseroeffnung war die Luft angespannt, aber niemand war auf das vorbereitet, was dann wirklich kam."),
+                ("Der Name fiel", "Als der Anwalt den Namen dieser Frau vorlas, wurde meine Mutter ploetzlich kreidebleich und mein Vater schaute einfach nur auf den Boden."),
+                ("Niemand sprach", "Ich fragte mehrmals, wer diese Frau ueberhaupt ist, aber keiner sagte auch nur ein einziges Wort."),
+                ("Das Foto", "Spaeter fand ich ein altes Foto meiner Oma mit genau dieser Frau. Hinten drauf stand: Es tut mir leid, dass ich dich verstecken musste."),
+                ("Mir wurde schlecht", "Verstecken? Vor wem? Und warum wusste offenbar jeder in meiner Familie mehr als ich?"),
+                ("Die Spannung stieg", "Da wusste ich, dass diese fremde Frau gar nicht fremd war und dass meine Oma ein ganzes Leben lang ein Geheimnis mit sich getragen hatte."),
+                ("Part 2 kommt", "In Part 2 erzaehle ich dir, wer diese Frau wirklich war und warum meine Mutter fast zusammenbrach, als sie vor unserer Tuer stand."),
+            ],
+            "part2": [
+                ("Part 2", "Noch am selben Abend stand die angeblich fremde Frau vor unserer Tuer und nannte meine Mutter einfach kleine Schwester."),
+                ("Keiner konnte es leugnen", "Meine Mutter fing sofort an zu weinen und mein Vater sagte nur noch, dass dieser Tag irgendwann kommen musste."),
+                ("Die ganze Wahrheit", "Dann erfuhr ich, dass meine Oma vor Jahrzehnten eine erste Tochter bekommen hatte, die wegen eines Familienskandals weggegeben wurde."),
+                ("Warum niemand sprach", "Meine Urgrosseltern beschlossen damals, dass niemand je darueber reden duerfe, damit der Name der Familie sauber bleibt."),
+                ("Meine Oma bereute es", "Deshalb hatte meine Oma spaeter heimlich wieder Kontakt zu ihr aufgenommen und ihr am Ende alles vererbt."),
+                ("Meine Mutter zerbrach daran", "Nicht weil sie das Haus verlor, sondern weil sie ploetzlich verstand, dass sie ihr ganzes Leben lang eine Schwester hatte."),
+                ("Der letzte Brief", "Die fremde Frau brachte sogar einen alten Brief meiner Oma mit, in dem stand, dass sie diese Schuld nie mehr loswurde."),
+                ("Das Ende", "Am Ende erbte nicht einfach eine Fremde alles. Es bekam die Tochter, die jahrzehntelang so behandelt wurde, als haette es sie nie gegeben."),
+            ],
+        },
+    ]
+
+
+def build_story_package_from_series(
+    template: dict[str, Any],
+    cta: str,
+    target_seconds: float,
+    part_number: int,
+) -> VideoPackage:
+    part_key = "part2" if part_number == 2 else "part1"
+    parts = template[part_key]
+    title = template["title"]
+    title_with_part = f"{title} | Part {part_number}"
+
+    segments: list[Segment] = []
+    for index, (heading, text) in enumerate(parts, start=1):
+        minimum = 4.8 if index == 1 else 6.8
+        segments.append(
+            Segment(
+                index=index,
+                heading=heading,
+                narration=text,
+                caption=text,
+                duration_seconds=estimate_duration(text, minimum=minimum),
+            )
+        )
+
+    segments = normalize_durations(segments, max(MIN_TARGET_SECONDS, target_seconds))
+    narration_text = " ".join(segment.narration for segment in segments)
+
+    return VideoPackage(
+        channel_name="",
+        niche_slug="family-drama-story",
+        niche_label="Storytime",
+        topic=title_with_part,
+        style="viral_family_story",
+        title=title_with_part,
+        caption=f"{title_with_part}. {cta}",
+        hashtags=[],
+        cta=cta,
+        created_at=datetime.now(UTC).isoformat(),
+        narration_text=narration_text,
+        segments=segments,
+    )
 
 
 def build_story_script(topic: TopicCandidate, cta: str, target_seconds: float) -> VideoPackage:
@@ -586,10 +780,45 @@ def build_story_script_trend(topic: TopicCandidate, cta: str, target_seconds: fl
 
 
 def build_video_package(config: dict[str, Any], niche: dict[str, Any], state: dict[str, Any]) -> VideoPackage:
-    topic = pick_topic(niche, state.get("recent_topics", [])[-30:])
     target_seconds = max(MIN_TARGET_SECONDS, float(config.get("target_seconds", 65)))
+    now = datetime.now(UTC)
+    pending_followups = state.setdefault("pending_followups", [])
+    due_followup = None
 
-    package = build_story_script_trend(topic, niche.get("cta", ""), target_seconds)
+    for followup in pending_followups:
+        try:
+            due_at = datetime.fromisoformat(str(followup.get("due_at", "")).replace("Z", "+00:00"))
+        except Exception:
+            due_at = None
+        if due_at and due_at <= now:
+            due_followup = followup
+            break
+
+    templates = story_series_templates()
+
+    if due_followup:
+        template = next((item for item in templates if item["id"] == due_followup.get("series_id")), None)
+        if template is not None:
+            package = build_story_package_from_series(template, niche.get("cta", ""), target_seconds, 2)
+            pending_followups.remove(due_followup)
+        else:
+            due_followup = None
+
+    if due_followup is None:
+        recent_topics = state.get("recent_topics", [])[-30:]
+        unseen_templates = [template for template in templates if template["title"] not in recent_topics]
+        template = random.choice(unseen_templates or templates)
+        package = build_story_package_from_series(template, niche.get("cta", ""), target_seconds, 1)
+
+        if bool(config.get("followup_enabled", True)):
+            pending_followups.append(
+                {
+                    "series_id": template["id"],
+                    "title": template["title"],
+                    "due_at": (now + timedelta(minutes=int(config.get("followup_delay_minutes", 120)))).isoformat(),
+                }
+            )
+
     package.channel_name = config.get("channel_name", "AI Shorts")
     package.niche_slug = niche.get("slug", "viral-story")
     package.niche_label = niche.get("label", "Viral Story")
@@ -2030,7 +2259,7 @@ async def build_single_video(config: dict[str, Any], niche: dict[str, Any], stat
     video_path = render_video(package, config, project_dir, narration_path, caption_cues)
 
     recent_topics = state.setdefault("recent_topics", [])
-    recent_topics.append(package.topic)
+    recent_topics.append(package.title.split("| Part")[0].strip())
     state["recent_topics"] = recent_topics[-50:]
 
     if upload_enabled:

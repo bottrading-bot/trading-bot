@@ -158,10 +158,6 @@ def default_config() -> dict[str, Any]:
         "upload": {
             "mode": os.getenv("UPLOAD_MODE", "manual")
         },
-        "telegram": {
-            "bot_token": os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
-            "chat_id": os.getenv("TELEGRAM_CHAT_ID", "").strip(),
-        },
         "discord": {
             "webhook_url": os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
             "max_upload_mb": float(os.getenv("DISCORD_MAX_UPLOAD_MB", "8")),
@@ -2088,39 +2084,6 @@ def save_upload_error(project_dir: Path, error_message: str) -> None:
     (project_dir / "upload_error.txt").write_text(error_message, encoding="utf-8")
 
 
-def send_video_to_telegram(video_path: Path, package: VideoPackage, config: dict[str, Any], extra_message: str = "") -> bool:
-    telegram_cfg = config.get("telegram", {})
-    bot_token = str(telegram_cfg.get("bot_token", "")).strip()
-    chat_id = str(telegram_cfg.get("chat_id", "")).strip()
-
-    if not bot_token or not chat_id or not video_path.exists():
-        return False
-
-    caption_parts = [package.title]
-    if package.caption:
-        caption_parts.append(package.caption[:800])
-    if extra_message:
-        caption_parts.append(extra_message[:400])
-
-    caption = "\n\n".join(part for part in caption_parts if part).strip()
-
-    with video_path.open("rb") as handle:
-        response = requests.post(
-            f"https://api.telegram.org/bot{bot_token}/sendVideo",
-            data={
-                "chat_id": chat_id,
-                "caption": caption[:1024],
-                "supports_streaming": "true",
-            },
-            files={"video": handle},
-            timeout=600,
-        )
-
-    response.raise_for_status()
-    payload = response.json()
-    return bool(payload.get("ok"))
-
-
 def build_discord_fallback_video(video_path: Path, config: dict[str, Any]) -> Path | None:
     if not video_path.exists():
         return None
@@ -2392,17 +2355,6 @@ async def build_single_video(config: dict[str, Any], niche: dict[str, Any], stat
             state["upload_history"] = history[-200:]
             try:
                 await asyncio.to_thread(
-                    send_video_to_telegram,
-                    video_path,
-                    package,
-                    config,
-                    f"TikTok Upload: {result.status}",
-                )
-                print("Video an Telegram gesendet.", flush=True)
-            except Exception as telegram_error:
-                print(f"Telegram Versand fehlgeschlagen: {telegram_error}", flush=True)
-            try:
-                await asyncio.to_thread(
                     send_video_to_discord,
                     video_path,
                     package,
@@ -2429,17 +2381,6 @@ async def build_single_video(config: dict[str, Any], niche: dict[str, Any], stat
             save_upload_error(project_dir, message)
             try:
                 await asyncio.to_thread(
-                    send_video_to_telegram,
-                    video_path,
-                    package,
-                    config,
-                    message,
-                )
-                print("Video trotz Upload-Fehler an Telegram gesendet.", flush=True)
-            except Exception as telegram_error:
-                print(f"Telegram Versand fehlgeschlagen: {telegram_error}", flush=True)
-            try:
-                await asyncio.to_thread(
                     send_video_to_discord,
                     video_path,
                     package,
@@ -2462,17 +2403,6 @@ async def build_single_video(config: dict[str, Any], niche: dict[str, Any], stat
                 print(f"Google Drive Upload fehlgeschlagen: {drive_error}", flush=True)
     else:
         print("Upload ist deaktiviert. Video wurde nur erstellt.", flush=True)
-        try:
-            await asyncio.to_thread(
-                send_video_to_telegram,
-                video_path,
-                package,
-                config,
-                "Video lokal erstellt.",
-            )
-            print("Video an Telegram gesendet.", flush=True)
-        except Exception as telegram_error:
-            print(f"Telegram Versand fehlgeschlagen: {telegram_error}", flush=True)
         try:
             await asyncio.to_thread(
                 send_video_to_discord,

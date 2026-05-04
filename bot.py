@@ -1592,10 +1592,10 @@ def pick_background_video(config: dict[str, Any], package: VideoPackage, state: 
         print(f"Kein Clip mit Keyword '{forced_keyword}' gefunden.", flush=True)
 
     profile_keywords = {
-        "subway": ["subway", "subway_surfers", "surfers", "runner"],
-        "minecraft": ["minecraft", "minecraft_parkour", "parkour", "blocks"],
-        "obby": ["obby", "roblox", "roblox_obby", "parkour"],
-        "gta": ["gta", "gta5", "gta_5", "driving", "car", "race"],
+        "subway": ["subway", "subway_surfers", "surfers", "runner", "neon", "tunnel", "loop"],
+        "minecraft": ["minecraft", "minecraft_parkour", "parkour", "blocks", "satisfying", "slime", "kinetic"],
+        "obby": ["obby", "roblox", "roblox_obby", "parkour", "keyboard", "mouse", "rgb", "satisfying"],
+        "gta": ["gta", "gta5", "gta_5", "driving", "car", "race", "night", "city", "street"],
     }
 
     preferred = []

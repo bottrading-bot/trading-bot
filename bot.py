@@ -693,8 +693,7 @@ def postprocess_audio_file(source: Path, speed: float, voice_profile: str = "gen
         filter_parts = [
             "highpass=f=70",
             "lowpass=f=9000",
-            "loudnorm=I=-16:LRA=9:TP=-1.5",
-            "acompressor=threshold=-21dB:ratio=1.45:attack=10:release=140",
+            "volume=1.08",
         ]
     else:
         filter_parts = [

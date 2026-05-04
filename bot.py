@@ -122,8 +122,8 @@ def default_config() -> dict[str, Any]:
         "assets_dir": os.getenv("ASSETS_DIR", "shorts_assets"),
         "output_dir": os.getenv("OUTPUT_DIR", "shorts_output"),
         "background_music_volume": float(os.getenv("BACKGROUND_MUSIC_VOLUME", "0.05")),
-        "voice_speed": float(os.getenv("VOICE_SPEED", "1.00")),
-        "voice_volume": float(os.getenv("VOICE_VOLUME", "1.75")),
+        "voice_speed": float(os.getenv("VOICE_SPEED", "0.97")),
+        "voice_volume": float(os.getenv("VOICE_VOLUME", "1.65")),
         "prefer_generated_gameplay": env_bool("PREFER_GENERATED_GAMEPLAY", False),
         "preferred_background_keyword": os.getenv("PREFERRED_BACKGROUND_KEYWORD", "minecraft").strip().lower(),
         "preferred_background_filename": os.getenv("PREFERRED_BACKGROUND_FILENAME", "").strip(),
@@ -671,7 +671,7 @@ def split_caption_chunks(text: str) -> list[str]:
         current.append(word)
         end_punctuation = word.endswith((".", "!", "?", ",", ":", ";"))
         cleaned_length = len(word.strip(".,!?;:"))
-        max_words = 1
+        max_words = 1 if cleaned_length >= 10 else 2
         if len(current) >= max_words or end_punctuation:
             chunks.append(" ".join(current))
             current = []
@@ -889,61 +889,36 @@ def create_slide_image(text: str, config: dict[str, Any], destination: Path) -> 
     image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
 
-    display_text = text.upper().strip()
+    display_text = " ".join(text.strip().split())
     words = display_text.split()
     if not words:
         image.save(destination)
         return
 
-    font_size = min(340, max(220, int(width * 0.30)))
+    font_size = min(240, max(150, int(width * 0.18)))
     caption_font = find_font(font_size, bold=True)
-    max_width = width - 20
-    lines = wrap_text(draw, display_text, caption_font, max_width)[:1]
+    max_width = width - 140
+    lines = wrap_text(draw, display_text, caption_font, max_width)[:2]
 
-    while lines and any((draw.textbbox((0, 0), line, font=caption_font, stroke_width=16)[2] > max_width) for line in lines) and font_size > 150:
+    while lines and any((draw.textbbox((0, 0), line, font=caption_font)[2] > max_width) for line in lines) and font_size > 110:
         font_size -= 12
         caption_font = find_font(font_size, bold=True)
-        lines = wrap_text(draw, display_text, caption_font, max_width)[:1]
+        lines = wrap_text(draw, display_text, caption_font, max_width)[:2]
 
-    line_height = int(font_size * 0.92)
+    line_height = int(font_size * 0.98)
     block_height = len(lines) * line_height
-    y = int(height * 0.66) - block_height // 2
-
-    highlight_word = words[-1].strip(".,!?;:").lower()
+    y = int(height * 0.58) - block_height // 2
 
     for line in lines:
-        line_words = line.split()
-        word_boxes = []
-        total_width = 0
-
-        for word in line_words:
-            bbox = draw.textbbox((0, 0), word, font=caption_font, stroke_width=16)
-            word_width = bbox[2] - bbox[0]
-            word_boxes.append((word, word_width))
-            total_width += word_width
-
-        total_width += max(0, len(word_boxes) - 1) * int(font_size * 0.06)
-        x = (width - total_width) // 2
-
-        for word, word_width in word_boxes:
-            normalized = word.strip(".,!?;:").lower()
-            fill = (255, 214, 64, 255) if normalized == highlight_word else (255, 255, 255, 255)
-            shadow_offset = max(8, font_size // 18)
-            draw.text(
-                (x + shadow_offset, y + shadow_offset),
-                word,
-                font=caption_font,
-                fill=(0, 0, 0, 210),
-            )
-            draw.text(
-                (x, y),
-                word,
-                font=caption_font,
-                fill=fill,
-                stroke_width=16,
-                stroke_fill=(0, 0, 0, 240),
-            )
-            x += word_width + int(font_size * 0.06)
+        bbox = draw.textbbox((0, 0), line, font=caption_font)
+        line_width = bbox[2] - bbox[0]
+        x = (width - line_width) // 2
+        draw.text(
+            (x, y),
+            line,
+            font=caption_font,
+            fill=(255, 255, 255, 255),
+        )
 
         y += line_height
 
@@ -1461,14 +1436,17 @@ def render_video(package: VideoPackage, config: dict[str, Any], project_dir: Pat
     for segment in package.segments:
         real_duration = max(2.0, segment.duration_seconds * scale)
         chunks = split_caption_chunks(segment.caption)
-        chunk_duration = real_duration / max(1, len(chunks))
+        chunk_weights = [max(1, len(chunk.replace(" ", "").strip())) for chunk in chunks]
+        total_weight = sum(chunk_weights) or 1
+        elapsed_in_segment = 0.0
 
-        for chunk_index, chunk_text in enumerate(chunks, start=1):
+        for chunk_index, (chunk_text, chunk_weight) in enumerate(zip(chunks, chunk_weights), start=1):
             frame_path = frames_dir / f"caption_{segment.index:02d}_{chunk_index:02d}.png"
             create_slide_image(chunk_text, config, frame_path)
 
-            start_time = current_time + ((chunk_index - 1) * chunk_duration)
-            overlay_duration = max(0.18, chunk_duration * 0.82)
+            chunk_duration = real_duration * (chunk_weight / total_weight)
+            start_time = current_time + elapsed_in_segment
+            overlay_duration = max(0.22, chunk_duration * 0.96)
 
             overlay = (
                 ImageClip(str(frame_path))
@@ -1477,6 +1455,7 @@ def render_video(package: VideoPackage, config: dict[str, Any], project_dir: Pat
                 .with_opacity(1.0)
             )
             overlay_clips.append(overlay)
+            elapsed_in_segment += chunk_duration
 
         current_time += real_duration
 

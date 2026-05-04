@@ -717,11 +717,20 @@ def postprocess_audio_file(source: Path, speed: float, voice_profile: str = "gen
         "-filter:a",
         audio_filter,
         "-vn",
+        "-codec:a",
+        "libmp3lame",
+        "-b:a",
+        "192k",
         str(temp_path),
     ]
-
-    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    temp_path.replace(source)
+    try:
+        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if temp_path.exists() and temp_path.stat().st_size > 0:
+            temp_path.replace(source)
+    except Exception as error:
+        with contextlib.suppress(FileNotFoundError):
+            temp_path.unlink()
+        print(f"Audio-Nachbearbeitung uebersprungen: {error}", flush=True)
 
 
 def prepare_fallback_tts_text(text: str) -> str:

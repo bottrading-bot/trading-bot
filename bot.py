@@ -856,19 +856,19 @@ def create_slide_image(text: str, config: dict[str, Any], destination: Path) -> 
         image.save(destination)
         return
 
-    font_size = min(420, max(280, int(width * 0.40)))
+    font_size = min(340, max(220, int(width * 0.30)))
     caption_font = find_font(font_size, bold=True)
     max_width = width - 20
     lines = wrap_text(draw, display_text, caption_font, max_width)[:1]
 
-    while lines and any((draw.textbbox((0, 0), line, font=caption_font, stroke_width=18)[2] > max_width) for line in lines) and font_size > 180:
-        font_size -= 14
+    while lines and any((draw.textbbox((0, 0), line, font=caption_font, stroke_width=16)[2] > max_width) for line in lines) and font_size > 150:
+        font_size -= 12
         caption_font = find_font(font_size, bold=True)
         lines = wrap_text(draw, display_text, caption_font, max_width)[:1]
 
-    line_height = int(font_size * 0.90)
+    line_height = int(font_size * 0.92)
     block_height = len(lines) * line_height
-    y = int(height * 0.78) - block_height // 2
+    y = int(height * 0.66) - block_height // 2
 
     highlight_word = words[-1].strip(".,!?;:").lower()
 
@@ -878,7 +878,7 @@ def create_slide_image(text: str, config: dict[str, Any], destination: Path) -> 
         total_width = 0
 
         for word in line_words:
-            bbox = draw.textbbox((0, 0), word, font=caption_font, stroke_width=18)
+            bbox = draw.textbbox((0, 0), word, font=caption_font, stroke_width=16)
             word_width = bbox[2] - bbox[0]
             word_boxes.append((word, word_width))
             total_width += word_width
@@ -889,7 +889,7 @@ def create_slide_image(text: str, config: dict[str, Any], destination: Path) -> 
         for word, word_width in word_boxes:
             normalized = word.strip(".,!?;:").lower()
             fill = (255, 214, 64, 255) if normalized == highlight_word else (255, 255, 255, 255)
-            shadow_offset = max(10, font_size // 16)
+            shadow_offset = max(8, font_size // 18)
             draw.text(
                 (x + shadow_offset, y + shadow_offset),
                 word,
@@ -901,7 +901,7 @@ def create_slide_image(text: str, config: dict[str, Any], destination: Path) -> 
                 word,
                 font=caption_font,
                 fill=fill,
-                stroke_width=18,
+                stroke_width=16,
                 stroke_fill=(0, 0, 0, 240),
             )
             x += word_width + int(font_size * 0.06)

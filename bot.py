@@ -33,6 +33,7 @@ try:
         CompositeVideoClip,
         ImageClip,
         VideoFileClip,
+        concatenate_audioclips,
         concatenate_videoclips,
     )
 except Exception:
@@ -42,6 +43,7 @@ except Exception:
         CompositeVideoClip,
         ImageClip,
         VideoFileClip,
+        concatenate_audioclips,
         concatenate_videoclips,
     )
 
@@ -93,6 +95,14 @@ class UploadResult:
     status: str
     upload_url: str | None
     status_payload: dict[str, Any] | None
+
+
+@dataclass
+class CaptionCue:
+    index: int
+    text: str
+    start_seconds: float
+    end_seconds: float
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -791,6 +801,15 @@ def convert_audio_to_mp3(source: Path, destination: Path) -> None:
     subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def get_audio_duration_seconds(audio_path: Path) -> float:
+    with suppress_media_noise():
+        clip = AudioFileClip(str(audio_path))
+    try:
+        return float(clip.duration)
+    finally:
+        clip.close()
+
+
 def resolve_piper_model_paths(config: dict[str, Any]) -> tuple[Path, Path | None, Path | None] | None:
     piper_cfg = config.get("piper_tts", {})
     explicit_model = str(piper_cfg.get("model_path", "")).strip()
@@ -870,6 +889,15 @@ def generate_piper_tts(text: str, destination: Path, config: dict[str, Any]) -> 
     speaker_id_raw = str(piper_cfg.get("speaker_id", "")).strip()
     if speaker_id_raw.isdigit():
         command.extend(["--speaker", speaker_id_raw])
+
+    command.extend([
+        "--length-scale",
+        str(piper_cfg.get("length_scale", 0.92)),
+        "--noise-scale",
+        str(piper_cfg.get("noise_scale", 0.82)),
+        "--noise-w",
+        str(piper_cfg.get("noise_w_scale", 1.10)),
+    ])
 
     command.extend(["--", prepared_text])
     subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -980,6 +1008,84 @@ async def generate_voiceover(text: str, language: str, destination: Path, config
 
     postprocess_audio_file(destination, voice_speed, "gtts")
     print("gTTS Voiceover erfolgreich erstellt.", flush=True)
+
+
+async def build_narration_audio(package: VideoPackage, config: dict[str, Any], project_dir: Path) -> Path:
+    language = config.get("language", "de")
+    voices_dir = ensure_directory(project_dir / "voice_segments")
+    segment_audio_paths: list[Path] = []
+    updated_segments: list[Segment] = []
+
+    for segment in package.segments:
+        segment_path = voices_dir / f"segment_{segment.index:02d}.mp3"
+        await generate_voiceover(segment.narration, language, segment_path, config)
+        duration = max(0.2, get_audio_duration_seconds(segment_path))
+        segment_audio_paths.append(segment_path)
+        updated_segments.append(
+            Segment(
+                index=segment.index,
+                heading=segment.heading,
+                narration=segment.narration,
+                caption=segment.caption,
+                duration_seconds=round(duration, 3),
+            )
+        )
+
+    package.segments = updated_segments
+    package.narration_text = " ".join(segment.narration for segment in package.segments)
+    final_path = project_dir / "voice.mp3"
+
+    with suppress_media_noise():
+        audio_clips = [AudioFileClip(str(path)) for path in segment_audio_paths]
+
+    try:
+        final_audio = concatenate_audioclips(audio_clips)
+        with suppress_media_noise():
+            final_audio.write_audiofile(
+                str(final_path),
+                fps=44100,
+                nbytes=2,
+                bitrate="192k",
+                logger=None,
+            )
+        final_audio.close()
+    finally:
+        for audio_clip in audio_clips:
+            audio_clip.close()
+
+    return final_path
+
+
+def build_caption_cues(package: VideoPackage) -> list[CaptionCue]:
+    cues: list[CaptionCue] = []
+    current_time = 0.0
+    cue_index = 1
+
+    for segment in package.segments:
+        real_duration = max(0.2, float(segment.duration_seconds))
+        chunks = split_caption_chunks(segment.caption)
+        chunk_weights = [max(1, len(chunk.replace(" ", "").strip())) for chunk in chunks]
+        total_weight = sum(chunk_weights) or 1
+        elapsed_in_segment = 0.0
+
+        for chunk_text, chunk_weight in zip(chunks, chunk_weights):
+            chunk_duration = real_duration * (chunk_weight / total_weight)
+            start_time = current_time + elapsed_in_segment
+            end_time = min(current_time + real_duration, start_time + chunk_duration)
+            cues.append(
+                CaptionCue(
+                    index=cue_index,
+                    text=chunk_text,
+                    start_seconds=round(start_time, 3),
+                    end_seconds=round(max(start_time + 0.15, end_time), 3),
+                )
+            )
+            cue_index += 1
+            elapsed_in_segment += chunk_duration
+
+        current_time += real_duration
+
+    return cues
 
 def pick_background_video(config: dict[str, Any], package: VideoPackage) -> Path | None:
     if bool(config.get("prefer_generated_gameplay", True)):
@@ -1418,7 +1524,13 @@ def pick_music(config: dict[str, Any]) -> Path | None:
     return random.choice(files) if files else None
 
 
-def render_video(package: VideoPackage, config: dict[str, Any], project_dir: Path, narration_path: Path) -> Path:
+def render_video(
+    package: VideoPackage,
+    config: dict[str, Any],
+    project_dir: Path,
+    narration_path: Path,
+    caption_cues: list[CaptionCue],
+) -> Path:
     width = int(config.get("width", 1080))
     height = int(config.get("height", 1920))
     print(f"Render Start | {width}x{height} @ {int(config.get('fps', 24))}fps", flush=True)
@@ -1427,37 +1539,18 @@ def render_video(package: VideoPackage, config: dict[str, Any], project_dir: Pat
 
     narration_clip = AudioFileClip(str(narration_path)).with_volume_scaled(float(config.get("voice_volume", 1.75)))
     target_duration = max(float(config.get("target_seconds", 60)), float(narration_clip.duration), float(MIN_TARGET_SECONDS))
-    estimated_total = sum(segment.duration_seconds for segment in package.segments)
-    scale = target_duration / estimated_total if estimated_total else 1.0
-
     overlay_clips = []
-    current_time = 0.0
-
-    for segment in package.segments:
-        real_duration = max(2.0, segment.duration_seconds * scale)
-        chunks = split_caption_chunks(segment.caption)
-        chunk_weights = [max(1, len(chunk.replace(" ", "").strip())) for chunk in chunks]
-        total_weight = sum(chunk_weights) or 1
-        elapsed_in_segment = 0.0
-
-        for chunk_index, (chunk_text, chunk_weight) in enumerate(zip(chunks, chunk_weights), start=1):
-            frame_path = frames_dir / f"caption_{segment.index:02d}_{chunk_index:02d}.png"
-            create_slide_image(chunk_text, config, frame_path)
-
-            chunk_duration = real_duration * (chunk_weight / total_weight)
-            start_time = current_time + elapsed_in_segment
-            overlay_duration = max(0.22, chunk_duration * 0.96)
-
-            overlay = (
-                ImageClip(str(frame_path))
-                .with_duration(overlay_duration)
-                .with_start(start_time)
-                .with_opacity(1.0)
-            )
-            overlay_clips.append(overlay)
-            elapsed_in_segment += chunk_duration
-
-        current_time += real_duration
+    for cue in caption_cues:
+        frame_path = frames_dir / f"caption_{cue.index:03d}.png"
+        create_slide_image(cue.text, config, frame_path)
+        overlay_duration = max(0.18, cue.end_seconds - cue.start_seconds)
+        overlay = (
+            ImageClip(str(frame_path))
+            .with_duration(overlay_duration)
+            .with_start(cue.start_seconds)
+            .with_opacity(1.0)
+        )
+        overlay_clips.append(overlay)
 
     total_duration = target_duration
     print("Baue Caption Overlays...", flush=True)
@@ -1558,7 +1651,7 @@ def seconds_to_srt(value: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{remainder:03d}"
 
 
-def write_project_files(package: VideoPackage, project_dir: Path) -> None:
+def write_project_files(package: VideoPackage, project_dir: Path, caption_cues: list[CaptionCue]) -> None:
     metadata = {
         "title": package.title,
         "caption": package.caption,
@@ -1573,14 +1666,12 @@ def write_project_files(package: VideoPackage, project_dir: Path) -> None:
     (project_dir / "script.txt").write_text(package.narration_text, encoding="utf-8")
     (project_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    elapsed = 0.0
     captions = []
 
-    for segment in package.segments:
-        start = seconds_to_srt(elapsed)
-        elapsed += segment.duration_seconds
-        end = seconds_to_srt(elapsed)
-        captions.append(f"{segment.index}\n{start} --> {end}\n{segment.caption}\n")
+    for cue in caption_cues:
+        start = seconds_to_srt(cue.start_seconds)
+        end = seconds_to_srt(cue.end_seconds)
+        captions.append(f"{cue.index}\n{start} --> {end}\n{cue.text}\n")
 
     (project_dir / "captions.srt").write_text("\n".join(captions), encoding="utf-8")
 
@@ -1932,18 +2023,11 @@ async def build_single_video(config: dict[str, Any], niche: dict[str, Any], stat
 
     project_dir = ensure_directory(output_dir / build_project_slug(package))
 
-    write_project_files(package, project_dir)
+    narration_path = await build_narration_audio(package, config, project_dir)
+    caption_cues = build_caption_cues(package)
+    write_project_files(package, project_dir, caption_cues)
 
-    narration_path = project_dir / "voice.mp3"
-
-    await generate_voiceover(
-        package.narration_text,
-        config.get("language", "de"),
-        narration_path,
-        config,
-    )
-
-    video_path = render_video(package, config, project_dir, narration_path)
+    video_path = render_video(package, config, project_dir, narration_path, caption_cues)
 
     recent_topics = state.setdefault("recent_topics", [])
     recent_topics.append(package.topic)

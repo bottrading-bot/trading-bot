@@ -775,10 +775,10 @@ def resolve_piper_model_paths(config: dict[str, Any]) -> tuple[Path, Path | None
         return None
 
     preferred_names = [
-        "de_DE-eva_k-x_low.onnx",
-        "de_DE-eva_k-low.onnx",
         "de_DE-kerstin-low.onnx",
         "de_DE-ramona-low.onnx",
+        "de_DE-eva_k-x_low.onnx",
+        "de_DE-eva_k-low.onnx",
         "de_DE-karlsson-low.onnx",
     ]
     for preferred_name in preferred_names:

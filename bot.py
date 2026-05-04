@@ -921,6 +921,10 @@ def split_caption_chunks(text: str) -> list[str]:
     return chunks
 
 
+def split_caption_words(text: str) -> list[str]:
+    return [word for word in text.split() if word.strip()]
+
+
 def postprocess_audio_file(source: Path, speed: float, voice_profile: str = "generic") -> None:
     if not source.exists():
         return
@@ -1292,19 +1296,34 @@ def build_caption_cues(package: VideoPackage) -> list[CaptionCue]:
 
     for segment in package.segments:
         real_duration = max(0.2, float(segment.duration_seconds))
-        chunks = split_caption_chunks(segment.caption)
-        chunk_weights = [max(1, len(chunk.replace(" ", "").strip())) for chunk in chunks]
-        total_weight = sum(chunk_weights) or 1
+        words = split_caption_words(segment.caption)
+        if not words:
+            current_time += real_duration
+            continue
+
+        word_weights: list[float] = []
+        for word in words:
+            cleaned = word.strip(".,!?;:")
+            weight = max(1.0, len(cleaned) * 0.75)
+            if word.endswith(","):
+                weight += 1.1
+            elif word.endswith((";", ":")):
+                weight += 1.3
+            elif word.endswith((".", "!", "?")):
+                weight += 1.8
+            word_weights.append(weight)
+
+        total_weight = sum(word_weights) or 1
         elapsed_in_segment = 0.0
 
-        for chunk_text, chunk_weight in zip(chunks, chunk_weights):
-            chunk_duration = real_duration * (chunk_weight / total_weight)
+        for word_text, word_weight in zip(words, word_weights):
+            chunk_duration = real_duration * (word_weight / total_weight)
             start_time = current_time + elapsed_in_segment
             end_time = min(current_time + real_duration, start_time + chunk_duration)
             cues.append(
                 CaptionCue(
                     index=cue_index,
-                    text=chunk_text,
+                    text=word_text,
                     start_seconds=round(start_time, 3),
                     end_seconds=round(max(start_time + 0.15, end_time), 3),
                 )

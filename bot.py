@@ -1010,6 +1010,7 @@ def prepare_fallback_tts_text(text: str) -> str:
         if not unicodedata.category(char).startswith("M")
     )
     prepared = unicodedata.normalize("NFC", prepared)
+    prepared = restore_german_umlauts(prepared)
     replacements = {
         ". ": "... ",
         "! ": "! ... ",
@@ -1026,6 +1027,89 @@ def prepare_fallback_tts_text(text: str) -> str:
     return prepared
 
 
+def restore_german_umlauts(text: str) -> str:
+    replacements = {
+        "ae": "ä",
+        "oe": "ö",
+        "ue": "ü",
+        "Ae": "Ä",
+        "Oe": "Ö",
+        "Ue": "Ü",
+        "ss": "ss",
+    }
+    word_map = {
+        "zurueck": "zurück",
+        "zurueckkam": "zurückkam",
+        "fuer": "für",
+        "fuehlen": "fühlen",
+        "frueher": "früher",
+        "frueh": "früh",
+        "tuer": "tür",
+        "tuer": "tür",
+        "tueren": "türen",
+        "wuerde": "würde",
+        "wuerden": "würden",
+        "wuetend": "wütend",
+        "ueber": "über",
+        "ueberfordert": "überfordert",
+        "ueberhaupt": "überhaupt",
+        "muetter": "mütter",
+        "mutter": "mutter",
+        "brueder": "brüder",
+        "schwoere": "schwöre",
+        "moegen": "mögen",
+        "mochte": "möchte",
+        "koennte": "könnte",
+        "koennte": "könnte",
+        "koennen": "können",
+        "ploetzlich": "plötzlich",
+        "eroeffnung": "eröffnung",
+        "eroeffnete": "eröffnete",
+        "groesser": "größer",
+        "groesste": "größte",
+        "geloescht": "gelöscht",
+        "fluesterte": "flüsterte",
+        "vernuenftig": "vernünftig",
+        "gefuehl": "gefühl",
+        "gefuehlt": "gefühlt",
+        "uebrig": "übrig",
+        "oeffne": "öffne",
+        "oeffnet": "öffnet",
+        "oeffnete": "öffnete",
+        "dafuer": "dafür",
+        "dafuerhielt": "dafürhielt",
+    }
+
+    def convert_word(raw_word: str) -> str:
+        prefix = ""
+        suffix = ""
+        core = raw_word
+
+        while core and not core[0].isalnum():
+            prefix += core[0]
+            core = core[1:]
+        while core and not core[-1].isalnum():
+            suffix = core[-1] + suffix
+            core = core[:-1]
+
+        if not core:
+            return raw_word
+
+        lower_core = core.lower()
+        if lower_core in word_map:
+            replacement = word_map[lower_core]
+            if core[:1].isupper():
+                replacement = replacement[:1].upper() + replacement[1:]
+            return f"{prefix}{replacement}{suffix}"
+
+        replacement = core
+        for source, target in replacements.items():
+            replacement = replacement.replace(source, target)
+        return f"{prefix}{replacement}{suffix}"
+
+    return " ".join(convert_word(word) for word in text.split())
+
+
 def prepare_piper_tts_text(text: str) -> str:
     prepared = unicodedata.normalize("NFKD", " ".join(text.split()))
     prepared = "".join(
@@ -1034,6 +1118,7 @@ def prepare_piper_tts_text(text: str) -> str:
         if not unicodedata.category(char).startswith("M")
     )
     prepared = unicodedata.normalize("NFC", prepared)
+    prepared = restore_german_umlauts(prepared)
     prepared = prepared.replace("...", ".")
     prepared = prepared.replace(" ,", ",")
     prepared = prepared.replace(" .", ".")

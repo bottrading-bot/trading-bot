@@ -139,9 +139,11 @@ def default_config() -> dict[str, Any]:
         "whisper_compute_type": os.getenv("WHISPER_COMPUTE_TYPE", "int8"),
         "assets_dir": os.getenv("ASSETS_DIR", "shorts_assets"),
         "output_dir": os.getenv("OUTPUT_DIR", "shorts_output"),
-        "background_music_volume": float(os.getenv("BACKGROUND_MUSIC_VOLUME", "0.05")),
+        "background_music_volume": float(os.getenv("BACKGROUND_MUSIC_VOLUME", "0.028")),
         "voice_speed": float(os.getenv("VOICE_SPEED", "0.94")),
         "voice_volume": float(os.getenv("VOICE_VOLUME", "1.58")),
+        "video_bitrate": os.getenv("VIDEO_BITRATE", "7000k").strip(),
+        "audio_bitrate": os.getenv("AUDIO_BITRATE", "224k").strip(),
         "piper_postprocess": env_bool("PIPER_POSTPROCESS", False),
         "prefer_generated_gameplay": env_bool("PREFER_GENERATED_GAMEPLAY", False),
         "preferred_background_keyword": os.getenv("PREFERRED_BACKGROUND_KEYWORD", "minecraft").strip().lower(),
@@ -1139,8 +1141,12 @@ def convert_audio_to_mp3(source: Path, destination: Path) -> None:
         "-vn",
         "-codec:a",
         "libmp3lame",
+        "-ar",
+        "44100",
+        "-ac",
+        "1",
         "-b:a",
-        "160k",
+        "224k",
         str(destination),
     ]
     subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1949,7 +1955,7 @@ def render_video(
 
     frames_dir = ensure_directory(project_dir / "frames")
 
-    narration_clip = AudioFileClip(str(narration_path)).with_volume_scaled(float(config.get("voice_volume", 1.75)))
+    narration_clip = AudioFileClip(str(narration_path)).with_volume_scaled(float(config.get("voice_volume", 1.58)))
     target_duration = max(float(config.get("target_seconds", 60)), float(narration_clip.duration), float(MIN_TARGET_SECONDS))
     overlay_clips = []
     for cue in caption_cues:
@@ -2038,7 +2044,9 @@ def render_video(
             fps=int(config.get("fps", 30)),
             codec="libx264",
             audio_codec="aac",
-            preset="veryfast",
+            preset="medium",
+            bitrate=str(config.get("video_bitrate", "7000k")),
+            audio_bitrate=str(config.get("audio_bitrate", "224k")),
             threads=2,
             temp_audiofile=str(project_dir / "temp-audio.m4a"),
             remove_temp=True,
@@ -2188,15 +2196,15 @@ def build_discord_fallback_video(video_path: Path, config: dict[str, Any]) -> Pa
         "-preset",
         "veryfast",
         "-b:v",
-        "900k",
+        "1200k",
         "-maxrate",
-        "1000k",
+        "1400k",
         "-bufsize",
-        "2000k",
+        "2800k",
         "-c:a",
         "aac",
         "-b:a",
-        "96k",
+        "128k",
         "-movflags",
         "+faststart",
         str(fallback_path),

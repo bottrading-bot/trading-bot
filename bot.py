@@ -131,6 +131,9 @@ def default_config() -> dict[str, Any]:
         "videos_per_run": max(1, env_int("VIDEOS_PER_RUN", 1)),
         "followup_delay_minutes": max(1, env_int("FOLLOWUP_DELAY_MINUTES", 120)),
         "followup_enabled": env_bool("FOLLOWUP_ENABLED", True),
+        "primary_post_interval_minutes": max(1, env_int("PRIMARY_POST_INTERVAL_MINUTES", 240)),
+        "run_loop": env_bool("RUN_LOOP", True),
+        "loop_interval_seconds": max(30, env_int("LOOP_INTERVAL_SECONDS", 300)),
         "assets_dir": os.getenv("ASSETS_DIR", "shorts_assets"),
         "output_dir": os.getenv("OUTPUT_DIR", "shorts_output"),
         "background_music_volume": float(os.getenv("BACKGROUND_MUSIC_VOLUME", "0.05")),
@@ -479,14 +482,26 @@ def build_story_package_from_series(
     parts = template[part_key]
     title = template["title"]
     title_with_part = f"{title} | Part {part_number}"
+    heading_variants = [
+        ["Warte kurz", "Storytime", "Kein Witz", "Pass auf"],
+        ["Am Anfang", "Erst wirkte alles normal", "Zuerst war alles ruhig"],
+        ["Dann passierte das", "Dann kippte es", "Ab da wurde es komisch"],
+        ["Der naechste Schock", "Und dann wurde es schlimmer", "Ab da war klar"],
+        ["Der Moment der Wahrheit", "Dann kam der Hammer", "Dann flog alles auf"],
+        ["Was wirklich dahintersteckte", "Die eigentliche Wahrheit", "Der echte Grund"],
+        ["Was ich danach tat", "Wie es weiterging", "Was danach passiert ist"],
+        ["Fortsetzung", "Das war noch nicht alles", "Und genau da begann Part 2"],
+    ]
 
     segments: list[Segment] = []
     for index, (heading, text) in enumerate(parts, start=1):
         minimum = 4.8 if index == 1 else 6.8
+        heading_choices = heading_variants[min(index - 1, len(heading_variants) - 1)]
+        final_heading = random.choice(heading_choices) if heading.startswith(("Warte", "Harte", "Storytime", "Part 2", "Am Anfang", "Dann", "Es", "Der", "Was")) else heading
         segments.append(
             Segment(
                 index=index,
-                heading=heading,
+                heading=final_heading,
                 narration=text,
                 caption=text,
                 duration_seconds=estimate_duration(text, minimum=minimum),
@@ -779,7 +794,7 @@ def build_story_script_trend(topic: TopicCandidate, cta: str, target_seconds: fl
     )
 
 
-def build_video_package(config: dict[str, Any], niche: dict[str, Any], state: dict[str, Any]) -> VideoPackage:
+def build_video_package(config: dict[str, Any], niche: dict[str, Any], state: dict[str, Any]) -> VideoPackage | None:
     target_seconds = max(MIN_TARGET_SECONDS, float(config.get("target_seconds", 65)))
     now = datetime.now(UTC)
     pending_followups = state.setdefault("pending_followups", [])
@@ -805,6 +820,15 @@ def build_video_package(config: dict[str, Any], niche: dict[str, Any], state: di
             due_followup = None
 
     if due_followup is None:
+        next_primary_due_raw = str(state.get("next_primary_due_at", "")).strip()
+        next_primary_due = None
+        if next_primary_due_raw:
+            with contextlib.suppress(Exception):
+                next_primary_due = datetime.fromisoformat(next_primary_due_raw.replace("Z", "+00:00"))
+
+        if next_primary_due and next_primary_due > now:
+            return None
+
         recent_topics = state.get("recent_topics", [])[-30:]
         unseen_templates = [template for template in templates if template["title"] not in recent_topics]
         template = random.choice(unseen_templates or templates)
@@ -818,6 +842,9 @@ def build_video_package(config: dict[str, Any], niche: dict[str, Any], state: di
                     "due_at": (now + timedelta(minutes=int(config.get("followup_delay_minutes", 120)))).isoformat(),
                 }
             )
+        state["next_primary_due_at"] = (
+            now + timedelta(minutes=int(config.get("primary_post_interval_minutes", 240)))
+        ).isoformat()
 
     package.channel_name = config.get("channel_name", "AI Shorts")
     package.niche_slug = niche.get("slug", "viral-story")
@@ -2258,8 +2285,11 @@ def log_background_inventory(config: dict[str, Any]) -> None:
         print(f"Background file: {file.as_posix()} | {file.stat().st_size} bytes", flush=True)
 
 
-async def build_single_video(config: dict[str, Any], niche: dict[str, Any], state: dict[str, Any], upload_enabled: bool) -> Path:
+async def build_single_video(config: dict[str, Any], niche: dict[str, Any], state: dict[str, Any], upload_enabled: bool) -> Path | None:
     package = build_video_package(config, niche, state)
+    if package is None:
+        print("Noch kein neuer Post faellig. Warte auf den naechsten Scheduler-Durchlauf.", flush=True)
+        return None
 
     hashtags = " ".join(f"#{tag}" for tag in package.hashtags)
     package.caption = f"{package.caption}\n\n{hashtags}"
@@ -2421,7 +2451,9 @@ async def run_factory(config_path: Path, preferred_niche: str | None, upload_ena
 
     for _ in range(int(config.get("videos_per_run", 1))):
         niche = choose_niche(config, preferred_niche)
-        created.append(await build_single_video(config, niche, state, upload_enabled))
+        built_path = await build_single_video(config, niche, state, upload_enabled)
+        if built_path is not None:
+            created.append(built_path)
 
     save_state(state_path, state)
 
@@ -2433,19 +2465,46 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default=DEFAULT_CONFIG)
     parser.add_argument("--niche", default=None)
     parser.add_argument("--upload", action="store_true")
+    parser.add_argument("--loop", action="store_true")
     return parser.parse_args()
+
+
+async def run_scheduler(config_path: Path, preferred_niche: str | None, upload_enabled: bool) -> list[Path]:
+    config = load_config(config_path)
+    interval_seconds = int(config.get("loop_interval_seconds", 300))
+    created_total: list[Path] = []
+
+    while True:
+        try:
+            created = await run_factory(config_path, preferred_niche, upload_enabled)
+            created_total.extend(created)
+        except Exception as error:
+            print(f"Scheduler-Durchlauf fehlgeschlagen: {error}", flush=True)
+            traceback.print_exc()
+
+        print(f"Scheduler wartet {interval_seconds} Sekunden bis zum naechsten Durchlauf.", flush=True)
+        await asyncio.sleep(interval_seconds)
 
 
 def main() -> None:
     args = parse_args()
     try:
+        base_config = load_config(Path(args.config))
+        loop_enabled = bool(args.loop or base_config.get("run_loop", False))
         print("Bot Start", flush=True)
         print(f"Config: {args.config}", flush=True)
         print(f"Niche: {args.niche or 'auto'}", flush=True)
         print(f"Upload enabled: {args.upload}", flush=True)
+        print(f"Loop enabled: {loop_enabled}", flush=True)
 
         created = asyncio.run(
-            run_factory(
+            run_scheduler(
+                config_path=Path(args.config),
+                preferred_niche=args.niche,
+                upload_enabled=args.upload,
+            )
+            if loop_enabled
+            else run_factory(
                 config_path=Path(args.config),
                 preferred_niche=args.niche,
                 upload_enabled=args.upload,

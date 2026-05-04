@@ -122,8 +122,8 @@ def default_config() -> dict[str, Any]:
         "assets_dir": os.getenv("ASSETS_DIR", "shorts_assets"),
         "output_dir": os.getenv("OUTPUT_DIR", "shorts_output"),
         "background_music_volume": float(os.getenv("BACKGROUND_MUSIC_VOLUME", "0.05")),
-        "voice_speed": float(os.getenv("VOICE_SPEED", "1.04")),
-        "voice_volume": float(os.getenv("VOICE_VOLUME", "2.00")),
+        "voice_speed": float(os.getenv("VOICE_SPEED", "1.00")),
+        "voice_volume": float(os.getenv("VOICE_VOLUME", "1.75")),
         "prefer_generated_gameplay": env_bool("PREFER_GENERATED_GAMEPLAY", False),
         "preferred_background_keyword": os.getenv("PREFERRED_BACKGROUND_KEYWORD", "minecraft").strip().lower(),
         "preferred_background_filename": os.getenv("PREFERRED_BACKGROUND_FILENAME", "").strip(),
@@ -682,19 +682,32 @@ def split_caption_chunks(text: str) -> list[str]:
     return chunks
 
 
-def speed_up_audio_file(source: Path, speed: float) -> None:
-    if speed <= 1.01 or not source.exists():
+def postprocess_audio_file(source: Path, speed: float, voice_profile: str = "generic") -> None:
+    if not source.exists():
         return
 
     ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
     temp_path = source.with_name(f"{source.stem}_fast{source.suffix}")
-    audio_filter = (
-        "highpass=f=120,"
-        "equalizer=f=2400:t=q:w=1.2:g=2,"
-        "loudnorm,"
-        "acompressor=threshold=-18dB:ratio=2.5:attack=5:release=50,"
-        f"atempo={speed:.2f}"
-    )
+
+    if voice_profile == "piper":
+        filter_parts = [
+            "highpass=f=70",
+            "lowpass=f=9000",
+            "loudnorm=I=-16:LRA=9:TP=-1.5",
+            "acompressor=threshold=-21dB:ratio=1.45:attack=10:release=140",
+        ]
+    else:
+        filter_parts = [
+            "highpass=f=100",
+            "equalizer=f=2200:t=q:w=1.0:g=1.2",
+            "loudnorm=I=-15:LRA=8:TP=-1.5",
+            "acompressor=threshold=-20dB:ratio=1.9:attack=8:release=90",
+        ]
+
+    if abs(speed - 1.0) > 0.01:
+        filter_parts.append(f"atempo={speed:.2f}")
+
+    audio_filter = ",".join(filter_parts)
 
     command = [
         ffmpeg_exe,
@@ -733,6 +746,24 @@ def prepare_fallback_tts_text(text: str) -> str:
     for source, target in replacements.items():
         prepared = prepared.replace(source, target)
     return prepared
+
+
+def prepare_piper_tts_text(text: str) -> str:
+    prepared = unicodedata.normalize("NFKD", " ".join(text.split()))
+    prepared = "".join(
+        char
+        for char in prepared
+        if not unicodedata.category(char).startswith("M")
+    )
+    prepared = unicodedata.normalize("NFC", prepared)
+    prepared = prepared.replace("...", ".")
+    prepared = prepared.replace(" ,", ",")
+    prepared = prepared.replace(" .", ".")
+    prepared = prepared.replace(" !", "!")
+    prepared = prepared.replace(" ?", "?")
+    prepared = prepared.replace(":", ",")
+    prepared = prepared.replace(";", ",")
+    return prepared.strip()
 
 
 def convert_audio_to_mp3(source: Path, destination: Path) -> None:
@@ -815,7 +846,7 @@ def generate_piper_tts(text: str, destination: Path, config: dict[str, Any]) -> 
 
     wav_path = destination.with_suffix(".wav")
     piper_cfg = config.get("piper_tts", {})
-    prepared_text = prepare_fallback_tts_text(text)
+    prepared_text = prepare_piper_tts_text(text)
     command = [
         sys.executable,
         "-m",
@@ -920,7 +951,7 @@ async def generate_voiceover(text: str, language: str, destination: Path, config
             print("Erzeuge Voiceover mit Piper TTS...", flush=True)
             created = await asyncio.to_thread(generate_piper_tts, text, destination, config)
             if created:
-                speed_up_audio_file(destination, voice_speed)
+                postprocess_audio_file(destination, voice_speed, "piper")
                 print("Piper TTS Voiceover erfolgreich erstellt.", flush=True)
                 return
         except Exception as error:
@@ -930,9 +961,9 @@ async def generate_voiceover(text: str, language: str, destination: Path, config
 
     if engine in {"auto", "edge"}:
         try:
-            voice = os.getenv("TTS_VOICE", "de-DE-KillianNeural")
-            rate = os.getenv("TTS_RATE", "+6%")
-            pitch = os.getenv("TTS_PITCH", "+4Hz")
+            voice = os.getenv("TTS_VOICE", "de-DE-KatjaNeural")
+            rate = os.getenv("TTS_RATE", "+2%")
+            pitch = os.getenv("TTS_PITCH", "+1Hz")
 
             print(f"Erzeuge Voiceover mit Edge TTS: {voice}", flush=True)
 
@@ -945,7 +976,7 @@ async def generate_voiceover(text: str, language: str, destination: Path, config
             await communicate.save(str(destination))
 
             if destination.exists() and destination.stat().st_size > 0:
-                speed_up_audio_file(destination, voice_speed)
+                postprocess_audio_file(destination, voice_speed, "edge")
                 print("Edge TTS Voiceover erfolgreich erstellt.", flush=True)
                 return
 
@@ -964,7 +995,7 @@ async def generate_voiceover(text: str, language: str, destination: Path, config
     if not destination.exists() or destination.stat().st_size <= 0:
         raise RuntimeError("Voiceover konnte nicht erzeugt werden.")
 
-    speed_up_audio_file(destination, voice_speed)
+    postprocess_audio_file(destination, voice_speed, "gtts")
     print("gTTS Voiceover erfolgreich erstellt.", flush=True)
 
 def pick_background_video(config: dict[str, Any], package: VideoPackage) -> Path | None:
@@ -1411,7 +1442,7 @@ def render_video(package: VideoPackage, config: dict[str, Any], project_dir: Pat
 
     frames_dir = ensure_directory(project_dir / "frames")
 
-    narration_clip = AudioFileClip(str(narration_path)).with_volume_scaled(float(config.get("voice_volume", 1.85)))
+    narration_clip = AudioFileClip(str(narration_path)).with_volume_scaled(float(config.get("voice_volume", 1.75)))
     target_duration = max(float(config.get("target_seconds", 60)), float(narration_clip.duration), float(MIN_TARGET_SECONDS))
     estimated_total = sum(segment.duration_seconds for segment in package.segments)
     scale = target_duration / estimated_total if estimated_total else 1.0

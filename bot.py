@@ -142,6 +142,7 @@ def default_config() -> dict[str, Any]:
         "background_music_volume": float(os.getenv("BACKGROUND_MUSIC_VOLUME", "0.05")),
         "voice_speed": float(os.getenv("VOICE_SPEED", "0.94")),
         "voice_volume": float(os.getenv("VOICE_VOLUME", "1.58")),
+        "piper_postprocess": env_bool("PIPER_POSTPROCESS", False),
         "prefer_generated_gameplay": env_bool("PREFER_GENERATED_GAMEPLAY", False),
         "preferred_background_keyword": os.getenv("PREFERRED_BACKGROUND_KEYWORD", "minecraft").strip().lower(),
         "preferred_background_filename": os.getenv("PREFERRED_BACKGROUND_FILENAME", "").strip(),
@@ -1225,7 +1226,8 @@ async def generate_voiceover(text: str, language: str, destination: Path, config
             print("Erzeuge Voiceover mit Piper TTS...", flush=True)
             created = await asyncio.to_thread(generate_piper_tts, text, destination, config)
             if created:
-                postprocess_audio_file(destination, voice_speed, "piper")
+                if bool(config.get("piper_postprocess", False)):
+                    postprocess_audio_file(destination, voice_speed, "piper")
                 print("Piper TTS Voiceover erfolgreich erstellt.", flush=True)
                 return
         except Exception as error:

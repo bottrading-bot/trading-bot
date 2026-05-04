@@ -134,6 +134,9 @@ def default_config() -> dict[str, Any]:
         "primary_post_interval_minutes": max(1, env_int("PRIMARY_POST_INTERVAL_MINUTES", 240)),
         "run_loop": env_bool("RUN_LOOP", True),
         "loop_interval_seconds": max(30, env_int("LOOP_INTERVAL_SECONDS", 300)),
+        "word_timestamps_enabled": env_bool("WORD_TIMESTAMPS_ENABLED", True),
+        "whisper_model_size": os.getenv("WHISPER_MODEL_SIZE", "tiny"),
+        "whisper_compute_type": os.getenv("WHISPER_COMPUTE_TYPE", "int8"),
         "assets_dir": os.getenv("ASSETS_DIR", "shorts_assets"),
         "output_dir": os.getenv("OUTPUT_DIR", "shorts_output"),
         "background_music_volume": float(os.getenv("BACKGROUND_MUSIC_VOLUME", "0.05")),
@@ -1362,6 +1365,57 @@ def build_caption_cues(package: VideoPackage) -> list[CaptionCue]:
 
     return cues
 
+
+def build_caption_cues_from_transcription(audio_path: Path, config: dict[str, Any]) -> list[CaptionCue]:
+    if not bool(config.get("word_timestamps_enabled", True)) or not audio_path.exists():
+        return []
+
+    try:
+        from faster_whisper import WhisperModel
+    except Exception as error:
+        print(f"Whisper nicht verfuegbar, nutze Fallback-Captions: {error}", flush=True)
+        return []
+
+    model_size = str(config.get("whisper_model_size", "tiny")).strip() or "tiny"
+    compute_type = str(config.get("whisper_compute_type", "int8")).strip() or "int8"
+
+    try:
+        model = WhisperModel(model_size, compute_type=compute_type)
+        segments, _ = model.transcribe(
+            str(audio_path),
+            language="de",
+            beam_size=1,
+            word_timestamps=True,
+            vad_filter=False,
+        )
+    except Exception as error:
+        print(f"Whisper-Transkription fehlgeschlagen, nutze Fallback-Captions: {error}", flush=True)
+        return []
+
+    cues: list[CaptionCue] = []
+    cue_index = 1
+
+    for segment in segments:
+        words = getattr(segment, "words", None) or []
+        for word in words:
+            text = str(getattr(word, "word", "")).strip()
+            start = getattr(word, "start", None)
+            end = getattr(word, "end", None)
+            if not text or start is None or end is None:
+                continue
+
+            cues.append(
+                CaptionCue(
+                    index=cue_index,
+                    text=text,
+                    start_seconds=round(float(start), 3),
+                    end_seconds=round(max(float(start) + 0.10, float(end)), 3),
+                )
+            )
+            cue_index += 1
+
+    return cues
+
 def pick_background_video(config: dict[str, Any], package: VideoPackage) -> Path | None:
     if bool(config.get("prefer_generated_gameplay", True)):
         print("Externe Gameplay-Clips deaktiviert. Nutze generated gameplay.", flush=True)
@@ -2302,7 +2356,9 @@ async def build_single_video(config: dict[str, Any], niche: dict[str, Any], stat
     project_dir = ensure_directory(output_dir / build_project_slug(package))
 
     narration_path = await build_narration_audio(package, config, project_dir)
-    caption_cues = build_caption_cues(package)
+    caption_cues = build_caption_cues_from_transcription(narration_path, config)
+    if not caption_cues:
+        caption_cues = build_caption_cues(package)
     write_project_files(package, project_dir, caption_cues)
 
     video_path = render_video(package, config, project_dir, narration_path, caption_cues)

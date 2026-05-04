@@ -500,13 +500,14 @@ def build_story_package_from_series(
         minimum = 4.8 if index == 1 else 6.8
         heading_choices = heading_variants[min(index - 1, len(heading_variants) - 1)]
         final_heading = random.choice(heading_choices) if heading.startswith(("Warte", "Harte", "Storytime", "Part 2", "Am Anfang", "Dann", "Es", "Der", "Was")) else heading
+        final_text = punch_up_story_hook(text) if index == 1 else text
         segments.append(
             Segment(
                 index=index,
                 heading=final_heading,
-                narration=text,
-                caption=text,
-                duration_seconds=estimate_duration(text, minimum=minimum),
+                narration=final_text,
+                caption=final_text,
+                duration_seconds=estimate_duration(final_text, minimum=minimum),
             )
         )
 
@@ -952,6 +953,24 @@ def split_caption_chunks(text: str) -> list[str]:
 
 def split_caption_words(text: str) -> list[str]:
     return [word for word in text.split() if word.strip()]
+
+
+def punch_up_story_hook(text: str) -> str:
+    cleaned = " ".join(str(text).split()).strip()
+    if not cleaned:
+        return cleaned
+
+    lowered = cleaned.lower()
+    if lowered.startswith(("kein witz", "ich schwoere", "warte kurz", "das ist komplett eskaliert")):
+        return cleaned
+
+    lead_ins = [
+        "Kein Witz:",
+        "Das ist komplett eskaliert:",
+        "Ich schwoere, genau so ist es passiert:",
+        "Warte kurz, denn das hier ist krank:",
+    ]
+    return f"{random.choice(lead_ins)} {cleaned}"
 
 
 def postprocess_audio_file(source: Path, speed: float, voice_profile: str = "generic") -> None:
@@ -1438,13 +1457,14 @@ def build_caption_cues(package: VideoPackage) -> list[CaptionCue]:
         for word_text, word_weight in zip(words, word_weights):
             chunk_duration = real_duration * (word_weight / total_weight)
             start_time = current_time + elapsed_in_segment
-            end_time = min(current_time + real_duration, start_time + chunk_duration)
+            visible_duration = max(0.11, chunk_duration * 0.82)
+            end_time = min(current_time + real_duration, start_time + visible_duration)
             cues.append(
                 CaptionCue(
                     index=cue_index,
                     text=word_text,
                     start_seconds=round(start_time, 3),
-                    end_seconds=round(max(start_time + 0.15, end_time), 3),
+                    end_seconds=round(max(start_time + 0.11, end_time), 3),
                 )
             )
             cue_index += 1
@@ -1493,12 +1513,18 @@ def build_caption_cues_from_transcription(audio_path: Path, config: dict[str, An
             if not text or start is None or end is None:
                 continue
 
+            raw_start = float(start)
+            raw_end = float(end)
+            raw_duration = max(0.08, raw_end - raw_start)
+            punctuation_bonus = 0.04 if text.endswith((".", "!", "?", ",", ";", ":")) else 0.0
+            visible_duration = min(raw_duration, max(0.10, raw_duration * 0.86 + punctuation_bonus))
+
             cues.append(
                 CaptionCue(
                     index=cue_index,
                     text=text,
-                    start_seconds=round(float(start), 3),
-                    end_seconds=round(max(float(start) + 0.10, float(end)), 3),
+                    start_seconds=round(raw_start, 3),
+                    end_seconds=round(max(raw_start + 0.10, raw_start + visible_duration), 3),
                 )
             )
             cue_index += 1
@@ -1566,10 +1592,10 @@ def pick_background_video(config: dict[str, Any], package: VideoPackage, state: 
         print(f"Kein Clip mit Keyword '{forced_keyword}' gefunden.", flush=True)
 
     profile_keywords = {
-        "subway": ["subway", "surfers", "runner"],
-        "minecraft": ["minecraft", "parkour", "blocks"],
-        "obby": ["obby", "roblox", "parkour"],
-        "gta": ["gta", "driving", "car", "race"],
+        "subway": ["subway", "subway_surfers", "surfers", "runner"],
+        "minecraft": ["minecraft", "minecraft_parkour", "parkour", "blocks"],
+        "obby": ["obby", "roblox", "roblox_obby", "parkour"],
+        "gta": ["gta", "gta5", "gta_5", "driving", "car", "race"],
     }
 
     preferred = []

@@ -1263,6 +1263,7 @@ def prepare_fallback_tts_text(text: str) -> str:
     }
     for source, target in replacements.items():
         prepared = prepared.replace(source, target)
+    prepared = repair_common_german_pronunciation(prepared)
     return prepared
 
 
@@ -1349,6 +1350,57 @@ def restore_german_umlauts(text: str) -> str:
     return " ".join(convert_word(word) for word in text.split())
 
 
+def repair_common_german_pronunciation(text: str) -> str:
+    repaired = str(text or "")
+    direct_map = {
+        "Ã¤": "ä",
+        "Ã¶": "ö",
+        "Ã¼": "ü",
+        "Ã„": "Ä",
+        "Ã–": "Ö",
+        "Ãœ": "Ü",
+        "ÃŸ": "ß",
+        "ZwÃ¶lf": "Zwölf",
+        "spÃ¤ter": "später",
+        "TÃ¼r": "Tür",
+        "zurÃ¼ck": "zurück",
+        "fÃ¼r": "für",
+        "Ã¼ber": "über",
+        "plÃ¶tzlich": "plötzlich",
+        "flÃ¼sterte": "flüsterte",
+        "vernÃ¼nftig": "vernünftig",
+        "erÃ¶ffnung": "eröffnung",
+        "erÃ¶ffnete": "eröffnete",
+        "gelÃ¶scht": "gelöscht",
+        "gefÃ¼hl": "gefühl",
+        "gefÃ¼hlt": "gefühlt",
+        "schwÃ¶re": "schwöre",
+        "mÃ¶gen": "mögen",
+        "mÃ¶chte": "möchte",
+        "kÃ¶nnte": "könnte",
+        "kÃ¶nnen": "können",
+        "brÃ¼der": "brüder",
+        "mÃ¼tter": "mütter",
+        "tÃ¼r": "tür",
+        "tÃ¼ren": "türen",
+        "wÃ¼rde": "würde",
+        "wÃ¼rden": "würden",
+        "wÃ¼tend": "wütend",
+        "grÃ¶ÃŸer": "größer",
+        "grÃ¶ÃŸte": "größte",
+        "dafÃ¼r": "dafür",
+    }
+    for source, target in direct_map.items():
+        repaired = repaired.replace(source, target)
+
+    repaired = repaired.replace("AITA", "Am I The Asshole")
+    repaired = repaired.replace("Aitah", "Am I The Asshole")
+    repaired = repaired.replace("OP", "oh pee")
+    repaired = repaired.replace("TrueOffMyChest", "True Off My Chest")
+    repaired = repaired.replace("relationship_advice", "relationship advice")
+    return repaired
+
+
 def prepare_piper_tts_text(text: str) -> str:
     prepared = unicodedata.normalize("NFKD", " ".join(text.split()))
     prepared = "".join(
@@ -1365,6 +1417,7 @@ def prepare_piper_tts_text(text: str) -> str:
     prepared = prepared.replace(" ?", "?")
     prepared = prepared.replace(":", ",")
     prepared = prepared.replace(";", ",")
+    prepared = repair_common_german_pronunciation(prepared)
     return prepared.strip()
 
 

@@ -141,6 +141,7 @@ def default_config() -> dict[str, Any]:
         "assets_dir": os.getenv("ASSETS_DIR", "shorts_assets"),
         "output_dir": os.getenv("OUTPUT_DIR", "shorts_output"),
         "background_music_volume": float(os.getenv("BACKGROUND_MUSIC_VOLUME", "0.028")),
+        "generated_music_volume": float(os.getenv("GENERATED_MUSIC_VOLUME", "0.020")),
         "voice_speed": float(os.getenv("VOICE_SPEED", "0.94")),
         "voice_volume": float(os.getenv("VOICE_VOLUME", "1.58")),
         "video_bitrate": os.getenv("VIDEO_BITRATE", "7000k").strip(),
@@ -157,6 +158,10 @@ def default_config() -> dict[str, Any]:
             "noise_scale": float(os.getenv("PIPER_NOISE_SCALE", "0.72")),
             "noise_w_scale": float(os.getenv("PIPER_NOISE_W_SCALE", "0.84")),
             "speaker_id": os.getenv("PIPER_SPEAKER_ID", "").strip(),
+            "female_model_path": os.getenv("PIPER_FEMALE_MODEL_PATH", "").strip(),
+            "female_config_path": os.getenv("PIPER_FEMALE_CONFIG_PATH", "").strip(),
+            "male_model_path": os.getenv("PIPER_MALE_MODEL_PATH", "").strip(),
+            "male_config_path": os.getenv("PIPER_MALE_CONFIG_PATH", "").strip(),
         },
         "upload": {
             "mode": os.getenv("UPLOAD_MODE", "manual")
@@ -1147,6 +1152,37 @@ def detect_gameplay_profile(package: VideoPackage) -> str:
     return "obby"
 
 
+def detect_story_mood(package: VideoPackage) -> str:
+    text = f"{package.title} {package.narration_text}".lower()
+    if any(keyword in text for keyword in ["geheim", "verschwand", "tot", "drohte", "bedroht", "vermisst", "schock", "mystery", "warnung"]):
+        return "dark"
+    if any(keyword in text for keyword in ["hochzeit", "baby", "mutter", "vater", "schwester", "bruder", "oma", "familie"]):
+        return "emotional"
+    if any(keyword in text for keyword in ["beziehung", "frau", "freund", "ehemann", "freundin", "affaere", "betrogen"]):
+        return "tense"
+    return "drama"
+
+
+def detect_narrator_profile(package: VideoPackage) -> str:
+    text = f"{package.title} {package.narration_text}".lower()
+    female_score = 0
+    male_score = 0
+
+    female_keywords = ["mutter", "oma", "schwester", "frau", "tochter", "freundin", "schwanger", "baby", "hochzeit", "mama"]
+    male_keywords = ["vater", "bruder", "mann", "freund", "ehemann", "sohn", "papa"]
+
+    for keyword in female_keywords:
+        if keyword in text:
+            female_score += 2
+    for keyword in male_keywords:
+        if keyword in text:
+            male_score += 2
+
+    if female_score >= male_score:
+        return "female"
+    return "male"
+
+
 def find_font(size: int, bold: bool = False):
     candidates = []
     assets_fonts = Path("shorts_assets/fonts")
@@ -1641,6 +1677,30 @@ def resolve_piper_model_paths(config: dict[str, Any]) -> tuple[Path, Path | None
     config_path = Path(f"{model_path}.json")
     return model_path, config_path, None
 
+
+def build_voice_config_for_package(config: dict[str, Any], package: VideoPackage) -> dict[str, Any]:
+    narrator = detect_narrator_profile(package)
+    piper_cfg = dict(config.get("piper_tts", {}))
+
+    female_model = str(piper_cfg.get("female_model_path", "")).strip()
+    female_config = str(piper_cfg.get("female_config_path", "")).strip()
+    male_model = str(piper_cfg.get("male_model_path", "")).strip()
+    male_config = str(piper_cfg.get("male_config_path", "")).strip()
+
+    if narrator == "male" and male_model:
+        piper_cfg["model_path"] = male_model
+        if male_config:
+            piper_cfg["config_path"] = male_config
+    elif narrator == "female" and female_model:
+        piper_cfg["model_path"] = female_model
+        if female_config:
+            piper_cfg["config_path"] = female_config
+
+    voice_config = dict(config)
+    voice_config["piper_tts"] = piper_cfg
+    voice_config["narrator_profile"] = narrator
+    return voice_config
+
 @contextlib.contextmanager
 def suppress_media_noise():
     with (
@@ -1808,10 +1868,11 @@ async def build_narration_audio(package: VideoPackage, config: dict[str, Any], p
     voices_dir = ensure_directory(project_dir / "voice_segments")
     segment_audio_paths: list[Path] = []
     updated_segments: list[Segment] = []
+    voice_config = build_voice_config_for_package(config, package)
 
     for segment in package.segments:
         segment_path = voices_dir / f"segment_{segment.index:02d}.mp3"
-        await generate_voiceover(segment.narration, language, segment_path, config)
+        await generate_voiceover(segment.narration, language, segment_path, voice_config)
         duration = max(0.2, get_audio_duration_seconds(segment_path))
         segment_audio_paths.append(segment_path)
         updated_segments.append(
@@ -2422,19 +2483,84 @@ def build_generated_gameplay_clip(
 
     return concatenate_videoclips(clips, method="compose").subclipped(0, total_duration)
 
-def pick_music(config: dict[str, Any]) -> Path | None:
+
+def generate_mood_music_track(project_dir: Path, package: VideoPackage, total_duration: float) -> Path:
+    music_dir = ensure_directory(project_dir / "generated_music")
+    destination = music_dir / "background_music.wav"
+    sample_rate = 22050
+    total_frames = max(1, int(total_duration * sample_rate))
+    mood = detect_story_mood(package)
+
+    mood_presets = {
+        "dark": {"base": [110.0, 164.81, 220.0], "pulse": 0.55, "detune": 0.4},
+        "tense": {"base": [146.83, 220.0, 293.66], "pulse": 0.75, "detune": 0.6},
+        "emotional": {"base": [130.81, 196.0, 261.63], "pulse": 0.35, "detune": 0.25},
+        "drama": {"base": [123.47, 185.0, 246.94], "pulse": 0.50, "detune": 0.3},
+    }
+    preset = mood_presets.get(mood, mood_presets["drama"])
+    frequencies = preset["base"]
+    pulse_strength = preset["pulse"]
+    detune = preset["detune"]
+
+    with wave.open(str(destination), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+
+        frames = bytearray()
+        for i in range(total_frames):
+            t = i / sample_rate
+            bar_phase = (t % 2.8) / 2.8
+            swell = 0.42 + 0.58 * math.sin(math.pi * bar_phase) ** 2
+            pulse = 0.82 + pulse_strength * (0.5 + 0.5 * math.sin(2 * math.pi * 0.85 * t))
+
+            sample = 0.0
+            for idx, freq in enumerate(frequencies):
+                local_freq = freq * (1.0 + detune * 0.001 * idx)
+                sample += math.sin(2 * math.pi * local_freq * t) * (0.22 / (idx + 1))
+
+            sample += math.sin(2 * math.pi * (frequencies[0] * 0.5) * t) * 0.07
+            sample *= swell * pulse
+            sample = max(-0.85, min(0.85, sample))
+            pcm = int(sample * 32767)
+            frames.extend(int(pcm).to_bytes(2, byteorder="little", signed=True))
+
+        wav_file.writeframes(frames)
+
+    return destination
+
+
+def pick_music(config: dict[str, Any], package: VideoPackage, project_dir: Path, total_duration: float) -> Path | None:
     music_dir = Path(config["assets_dir"]) / "music"
+    mood = detect_story_mood(package)
 
-    if not music_dir.exists():
-        return None
+    files: list[Path] = []
+    if music_dir.exists():
+        files = [
+            file
+            for file in music_dir.rglob("*")
+            if file.is_file() and file.suffix.lower() in {".mp3", ".wav", ".m4a"}
+        ]
 
-    files = [
-        file
-        for file in music_dir.iterdir()
-        if file.suffix.lower() in {".mp3", ".wav", ".m4a"}
-    ]
+    mood_keywords = {
+        "dark": ["dark", "creepy", "ambient", "mystery", "suspense"],
+        "tense": ["tense", "dramatic", "drama", "pulse", "cinematic"],
+        "emotional": ["emotional", "piano", "soft", "sad", "heart"],
+        "drama": ["drama", "ambient", "story", "cinematic", "soft"],
+    }
 
-    return random.choice(files) if files else None
+    if files:
+        preferred = []
+        keywords = mood_keywords.get(mood, [])
+        for file in files:
+            name = file.name.lower()
+            if any(keyword in name for keyword in keywords):
+                preferred.append(file)
+        if preferred:
+            return random.choice(preferred)
+        return random.choice(files)
+
+    return generate_mood_music_track(project_dir, package, total_duration)
 
 
 def render_video(
@@ -2531,7 +2657,7 @@ def render_video(
         size=(width, height),
     ).with_duration(total_duration)
 
-    music_path = pick_music(config)
+    music_path = pick_music(config, package, project_dir, total_duration)
 
     if music_path:
         music_clip = AudioFileClip(str(music_path))
@@ -2539,7 +2665,11 @@ def render_video(
         if music_clip.duration > final_clip.duration:
             music_clip = music_clip.subclipped(0, final_clip.duration)
 
-        music_clip = music_clip.with_volume_scaled(float(config.get("background_music_volume", 0.045)))
+        if "generated_music" in str(music_path):
+            music_volume = float(config.get("generated_music_volume", 0.020))
+        else:
+            music_volume = float(config.get("background_music_volume", 0.045))
+        music_clip = music_clip.with_volume_scaled(music_volume)
         final_clip = final_clip.with_audio(CompositeAudioClip([music_clip, narration_clip]))
     else:
         final_clip = final_clip.with_audio(narration_clip)

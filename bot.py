@@ -8,6 +8,7 @@ import io
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 import traceback
@@ -159,6 +160,14 @@ def default_config() -> dict[str, Any]:
         },
         "upload": {
             "mode": os.getenv("UPLOAD_MODE", "manual")
+        },
+        "reddit": {
+            "enabled": env_bool("REDDIT_ENABLED", False),
+            "subreddits": [item.strip() for item in os.getenv("REDDIT_SUBREDDITS", "AmItheAsshole,TrueOffMyChest,relationship_advice,confession").split(",") if item.strip()],
+            "sort": os.getenv("REDDIT_SORT", "top").strip().lower(),
+            "time": os.getenv("REDDIT_TIME", "week").strip().lower(),
+            "limit": max(5, env_int("REDDIT_LIMIT", 15)),
+            "user_agent": os.getenv("REDDIT_USER_AGENT", "BrainZapShorts/1.0"),
         },
         "discord": {
             "webhook_url": os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
@@ -530,6 +539,169 @@ def build_story_package_from_series(
     )
 
 
+def clean_reddit_text(text: str) -> str:
+    cleaned = str(text or "")
+    cleaned = cleaned.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    cleaned = re.sub(r"https?://\S+", " ", cleaned)
+    cleaned = re.sub(r"/u/\w+", " ", cleaned)
+    cleaned = re.sub(r"/r/\w+", " ", cleaned)
+    cleaned = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1", cleaned)
+    cleaned = cleaned.replace("*", " ").replace("#", " ").replace(">", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
+
+
+def split_reddit_sentences(text: str) -> list[str]:
+    cleaned = clean_reddit_text(text)
+    if not cleaned:
+        return []
+
+    parts = re.split(r"(?<=[.!?])\s+", cleaned)
+    sentences: list[str] = []
+    for part in parts:
+        item = " ".join(part.split()).strip()
+        if len(item) < 25:
+            continue
+        sentences.append(item)
+    return sentences
+
+
+def fetch_reddit_story_post(config: dict[str, Any], state: dict[str, Any]) -> dict[str, Any] | None:
+    reddit_cfg = config.get("reddit", {})
+    if not bool(reddit_cfg.get("enabled", False)):
+        return None
+
+    subreddits = list(reddit_cfg.get("subreddits", []))
+    if not subreddits:
+        return None
+
+    headers = {
+        "User-Agent": str(reddit_cfg.get("user_agent", "BrainZapShorts/1.0")),
+        "Accept": "application/json",
+    }
+    sort = str(reddit_cfg.get("sort", "top")).strip().lower() or "top"
+    time_filter = str(reddit_cfg.get("time", "week")).strip().lower() or "week"
+    limit = max(5, int(reddit_cfg.get("limit", 15)))
+    seen_ids = set(state.get("recent_reddit_ids", [])[-100:])
+
+    random.shuffle(subreddits)
+    for subreddit in subreddits:
+        url = f"https://www.reddit.com/r/{subreddit}/{sort}.json?limit={limit}&t={time_filter}"
+        try:
+            response = requests.get(url, headers=headers, timeout=20)
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as error:
+            print(f"Reddit Abruf fehlgeschlagen fuer r/{subreddit}: {error}", flush=True)
+            continue
+
+        children = (((payload or {}).get("data") or {}).get("children") or [])
+        candidates = []
+        for child in children:
+            data = child.get("data") or {}
+            post_id = str(data.get("id", "")).strip()
+            title = clean_reddit_text(data.get("title", ""))
+            selftext = clean_reddit_text(data.get("selftext", ""))
+            if not post_id or post_id in seen_ids:
+                continue
+            if not title or not selftext:
+                continue
+            if bool(data.get("over_18")) or bool(data.get("locked")):
+                continue
+            if len(selftext) < 280:
+                continue
+            candidates.append(
+                {
+                    "id": post_id,
+                    "subreddit": subreddit,
+                    "title": title,
+                    "selftext": selftext,
+                    "permalink": f"https://www.reddit.com{data.get('permalink', '')}",
+                }
+            )
+
+        if candidates:
+            return random.choice(candidates)
+
+    return None
+
+
+def build_reddit_story_package(
+    post: dict[str, Any],
+    cta: str,
+    target_seconds: float,
+    part_number: int = 1,
+    total_parts: int = 1,
+    sentences: list[str] | None = None,
+) -> VideoPackage:
+    title = clean_reddit_text(post.get("title", "Reddit Story"))
+    story_sentences = list(sentences or split_reddit_sentences(post.get("selftext", "")))
+    chunk_size = 8
+    start_index = (part_number - 1) * chunk_size
+    selected = story_sentences[start_index:start_index + chunk_size]
+
+    if part_number == 1:
+        selected = [punch_up_story_hook(title)] + selected
+    elif not selected:
+        selected = [f"Part {part_number}. {title}"]
+
+    heading_variants = [
+        "Warte kurz",
+        "Am Anfang",
+        "Dann passierte das",
+        "Ab da wurde es komisch",
+        "Der naechste Schock",
+        "Dann flog alles auf",
+        "Wie es weiterging",
+        "Das Ende",
+        "Fortsetzung",
+    ]
+
+    segments: list[Segment] = []
+    for index, text in enumerate(selected[:8], start=1):
+        minimum = 4.2 if index == 1 else 6.2
+        segments.append(
+            Segment(
+                index=index,
+                heading=heading_variants[min(index - 1, len(heading_variants) - 1)],
+                narration=text,
+                caption=text,
+                duration_seconds=estimate_duration(text, minimum=minimum),
+            )
+        )
+
+    if total_parts > 1 and part_number == 1:
+        tail = "In Part 2 kommt der Rest der Story."
+        segments.append(
+            Segment(
+                index=len(segments) + 1,
+                heading="Part 2 kommt",
+                narration=tail,
+                caption=tail,
+                duration_seconds=estimate_duration(tail, minimum=4.5),
+            )
+        )
+
+    segments = normalize_durations(segments, max(MIN_TARGET_SECONDS, target_seconds))
+    narration_text = " ".join(segment.narration for segment in segments)
+    label = f"{title} | Part {part_number}" if total_parts > 1 else title
+
+    return VideoPackage(
+        channel_name="",
+        niche_slug="reddit-story",
+        niche_label="Reddit Story",
+        topic=label,
+        style="reddit_story",
+        title=label,
+        caption=f"{label}. {cta}",
+        hashtags=[],
+        cta=cta,
+        created_at=datetime.now(UTC).isoformat(),
+        narration_text=narration_text,
+        segments=segments,
+    )
+
+
 def build_story_script(topic: TopicCandidate, cta: str, target_seconds: float) -> VideoPackage:
     seed = topic.seed
     angle = topic.angle
@@ -815,12 +987,23 @@ def build_video_package(config: dict[str, Any], niche: dict[str, Any], state: di
     templates = story_series_templates()
 
     if due_followup:
-        template = next((item for item in templates if item["id"] == due_followup.get("series_id")), None)
-        if template is not None:
-            package = build_story_package_from_series(template, niche.get("cta", ""), target_seconds, 2)
+        if due_followup.get("source") == "reddit":
+            package = build_reddit_story_package(
+                due_followup,
+                niche.get("cta", ""),
+                target_seconds,
+                part_number=int(due_followup.get("part_number", 2)),
+                total_parts=int(due_followup.get("total_parts", 2)),
+                sentences=list(due_followup.get("sentences", [])),
+            )
             pending_followups.remove(due_followup)
         else:
-            due_followup = None
+            template = next((item for item in templates if item["id"] == due_followup.get("series_id")), None)
+            if template is not None:
+                package = build_story_package_from_series(template, niche.get("cta", ""), target_seconds, 2)
+                pending_followups.remove(due_followup)
+            else:
+                due_followup = None
 
     if due_followup is None:
         next_primary_due_raw = str(state.get("next_primary_due_at", "")).strip()
@@ -832,19 +1015,50 @@ def build_video_package(config: dict[str, Any], niche: dict[str, Any], state: di
         if next_primary_due and next_primary_due > now:
             return None
 
-        recent_topics = state.get("recent_topics", [])[-30:]
-        unseen_templates = [template for template in templates if template["title"] not in recent_topics]
-        template = random.choice(unseen_templates or templates)
-        package = build_story_package_from_series(template, niche.get("cta", ""), target_seconds, 1)
-
-        if bool(config.get("followup_enabled", True)):
-            pending_followups.append(
-                {
-                    "series_id": template["id"],
-                    "title": template["title"],
-                    "due_at": (now + timedelta(minutes=int(config.get("followup_delay_minutes", 120)))).isoformat(),
-                }
+        reddit_post = fetch_reddit_story_post(config, state)
+        if reddit_post:
+            reddit_sentences = split_reddit_sentences(reddit_post.get("selftext", ""))
+            total_parts = 2 if len(reddit_sentences) > 8 else 1
+            package = build_reddit_story_package(
+                reddit_post,
+                niche.get("cta", ""),
+                target_seconds,
+                part_number=1,
+                total_parts=total_parts,
+                sentences=reddit_sentences,
             )
+            recent_reddit = state.setdefault("recent_reddit_ids", [])
+            recent_reddit.append(reddit_post["id"])
+            state["recent_reddit_ids"] = recent_reddit[-100:]
+
+            if total_parts > 1 and bool(config.get("followup_enabled", True)):
+                pending_followups.append(
+                    {
+                        "source": "reddit",
+                        "id": reddit_post["id"],
+                        "title": reddit_post["title"],
+                        "subreddit": reddit_post["subreddit"],
+                        "selftext": reddit_post["selftext"],
+                        "sentences": reddit_sentences,
+                        "part_number": 2,
+                        "total_parts": total_parts,
+                        "due_at": (now + timedelta(minutes=int(config.get("followup_delay_minutes", 120)))).isoformat(),
+                    }
+                )
+        else:
+            recent_topics = state.get("recent_topics", [])[-30:]
+            unseen_templates = [template for template in templates if template["title"] not in recent_topics]
+            template = random.choice(unseen_templates or templates)
+            package = build_story_package_from_series(template, niche.get("cta", ""), target_seconds, 1)
+
+            if bool(config.get("followup_enabled", True)):
+                pending_followups.append(
+                    {
+                        "series_id": template["id"],
+                        "title": template["title"],
+                        "due_at": (now + timedelta(minutes=int(config.get("followup_delay_minutes", 120)))).isoformat(),
+                    }
+                )
         state["next_primary_due_at"] = (
             now + timedelta(minutes=int(config.get("primary_post_interval_minutes", 240)))
         ).isoformat()

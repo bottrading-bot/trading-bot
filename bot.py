@@ -163,7 +163,7 @@ def default_config() -> dict[str, Any]:
         },
         "reddit": {
             "enabled": env_bool("REDDIT_ENABLED", True),
-            "subreddits": [item.strip() for item in os.getenv("REDDIT_SUBREDDITS", "AmItheAsshole,TrueOffMyChest,relationship_advice,confession").split(",") if item.strip()],
+            "subreddits": [item.strip() for item in os.getenv("REDDIT_SUBREDDITS", "AmItheAsshole,TrueOffMyChest,confession,tifu,relationships,relationship_advice,offmychest,BestofRedditorUpdates").split(",") if item.strip()],
             "sort": os.getenv("REDDIT_SORT", "top").strip().lower(),
             "time": os.getenv("REDDIT_TIME", "week").strip().lower(),
             "limit": max(5, env_int("REDDIT_LIMIT", 15)),

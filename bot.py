@@ -1264,6 +1264,7 @@ def prepare_fallback_tts_text(text: str) -> str:
     for source, target in replacements.items():
         prepared = prepared.replace(source, target)
     prepared = repair_common_german_pronunciation(prepared)
+    prepared = repair_common_german_pronunciation_v2(prepared)
     return prepared
 
 
@@ -1401,6 +1402,57 @@ def repair_common_german_pronunciation(text: str) -> str:
     return repaired
 
 
+def repair_common_german_pronunciation_v2(text: str) -> str:
+    repaired = str(text or "")
+    direct_map = {
+        "Ã¤": "\u00e4",
+        "Ã¶": "\u00f6",
+        "Ã¼": "\u00fc",
+        "Ã„": "\u00c4",
+        "Ã–": "\u00d6",
+        "Ãœ": "\u00dc",
+        "ÃŸ": "\u00df",
+        "ZwÃ¶lf": "Zw\u00f6lf",
+        "spÃ¤ter": "sp\u00e4ter",
+        "TÃ¼r": "T\u00fcr",
+        "zurÃ¼ck": "zur\u00fcck",
+        "fÃ¼r": "f\u00fcr",
+        "Ã¼ber": "\u00fcber",
+        "plÃ¶tzlich": "pl\u00f6tzlich",
+        "flÃ¼sterte": "fl\u00fcsterte",
+        "vernÃ¼nftig": "vern\u00fcnftig",
+        "erÃ¶ffnung": "er\u00f6ffnung",
+        "erÃ¶ffnete": "er\u00f6ffnete",
+        "gelÃ¶scht": "gel\u00f6scht",
+        "gefÃ¼hl": "gef\u00fchl",
+        "gefÃ¼hlt": "gef\u00fchlt",
+        "schwÃ¶re": "schw\u00f6re",
+        "mÃ¶gen": "m\u00f6gen",
+        "mÃ¶chte": "m\u00f6chte",
+        "kÃ¶nnte": "k\u00f6nnte",
+        "kÃ¶nnen": "k\u00f6nnen",
+        "brÃ¼der": "br\u00fcder",
+        "mÃ¼tter": "m\u00fctter",
+        "tÃ¼r": "t\u00fcr",
+        "tÃ¼ren": "t\u00fcren",
+        "wÃ¼rde": "w\u00fcrde",
+        "wÃ¼rden": "w\u00fcrden",
+        "wÃ¼tend": "w\u00fctend",
+        "grÃ¶ÃŸer": "gr\u00f6\u00dfer",
+        "grÃ¶ÃŸte": "gr\u00f6\u00dfte",
+        "dafÃ¼r": "daf\u00fcr",
+    }
+    for source, target in direct_map.items():
+        repaired = repaired.replace(source, target)
+
+    repaired = repaired.replace("AITA", "Am I The Asshole")
+    repaired = repaired.replace("Aitah", "Am I The Asshole")
+    repaired = repaired.replace("OP", "oh pee")
+    repaired = repaired.replace("TrueOffMyChest", "True Off My Chest")
+    repaired = repaired.replace("relationship_advice", "relationship advice")
+    return repaired
+
+
 def prepare_piper_tts_text(text: str) -> str:
     prepared = unicodedata.normalize("NFKD", " ".join(text.split()))
     prepared = "".join(
@@ -1418,6 +1470,7 @@ def prepare_piper_tts_text(text: str) -> str:
     prepared = prepared.replace(":", ",")
     prepared = prepared.replace(";", ",")
     prepared = repair_common_german_pronunciation(prepared)
+    prepared = repair_common_german_pronunciation_v2(prepared)
     return prepared.strip()
 
 
@@ -1440,6 +1493,49 @@ def convert_audio_to_mp3(source: Path, destination: Path) -> None:
         str(destination),
     ]
     subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def clean_final_voice_audio(source: Path, config: dict[str, Any]) -> None:
+    if not source.exists():
+        return
+
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    temp_path = source.with_name(f"{source.stem}_clean{source.suffix}")
+    audio_bitrate = str(config.get("audio_bitrate", "224k")).strip() or "224k"
+    filter_chain = ",".join(
+        [
+            "highpass=f=75",
+            "lowpass=f=8500",
+            "afftdn=nf=-24",
+            "volume=1.03",
+        ]
+    )
+    command = [
+        ffmpeg_exe,
+        "-y",
+        "-i",
+        str(source),
+        "-filter:a",
+        filter_chain,
+        "-vn",
+        "-codec:a",
+        "libmp3lame",
+        "-ar",
+        "44100",
+        "-ac",
+        "1",
+        "-b:a",
+        audio_bitrate,
+        str(temp_path),
+    ]
+    try:
+        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if temp_path.exists() and temp_path.stat().st_size > 0:
+            temp_path.replace(source)
+    except Exception as error:
+        with contextlib.suppress(FileNotFoundError):
+            temp_path.unlink()
+        print(f"Finale Sprachreinigung uebersprungen: {error}", flush=True)
 
 
 def get_audio_duration_seconds(audio_path: Path) -> float:
@@ -1695,6 +1791,7 @@ async def build_narration_audio(package: VideoPackage, config: dict[str, Any], p
         for audio_clip in audio_clips:
             audio_clip.close()
 
+    clean_final_voice_audio(final_path, config)
     return final_path
 
 

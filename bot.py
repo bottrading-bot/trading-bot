@@ -168,6 +168,7 @@ def default_config() -> dict[str, Any]:
             "time": os.getenv("REDDIT_TIME", "week").strip().lower(),
             "limit": max(5, env_int("REDDIT_LIMIT", 15)),
             "user_agent": os.getenv("REDDIT_USER_AGENT", "BrainZapShorts/1.0"),
+            "min_score": max(1, env_int("REDDIT_MIN_SCORE", 6)),
         },
         "discord": {
             "webhook_url": os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
@@ -566,6 +567,53 @@ def split_reddit_sentences(text: str) -> list[str]:
     return sentences
 
 
+def score_reddit_story(title: str, body: str, subreddit: str) -> int:
+    text = f"{title} {body}".lower()
+    score = 0
+
+    family_keywords = [
+        "mother", "mom", "mum", "father", "dad", "sister", "brother", "grandma",
+        "grandmother", "grandpa", "family", "parents", "daughter", "son", "wife",
+        "husband", "fiance", "fiancé", "pregnant", "baby", "child", "wedding",
+        "married", "divorce", "inheritance",
+    ]
+    relationship_scandal_keywords = [
+        "cheat", "cheated", "affair", "secret", "lied", "lying", "betray", "betrayed",
+        "fake", "double life", "girlfriend", "boyfriend", "relationship", "ex", "hidden",
+        "text messages", "pregnancy", "dna", "paternity",
+    ]
+    confession_keywords = [
+        "confession", "admit", "admitted", "truth", "found out", "turns out", "plot twist",
+        "stole", "ruined", "destroyed", "blackmail", "threat", "threatened", "manipulated",
+        "abandoned", "missing", "secretly",
+    ]
+    weak_keywords = [
+        "aita for asking", "aita for telling", "minor issue", "coworker", "roommate",
+        "office", "meeting", "school project", "dishes", "laundry", "parking",
+    ]
+
+    for keyword in family_keywords:
+        if keyword in text:
+            score += 2
+    for keyword in relationship_scandal_keywords:
+        if keyword in text:
+            score += 2
+    for keyword in confession_keywords:
+        if keyword in text:
+            score += 2
+    for keyword in weak_keywords:
+        if keyword in text:
+            score -= 2
+
+    if subreddit.lower() in {"amitheasshole", "relationships", "relationship_advice", "trueoffmychest", "offmychest", "confession"}:
+        score += 2
+    if len(body) > 1200:
+        score += 1
+    if len(body) > 2200:
+        score += 1
+    return score
+
+
 def fetch_reddit_story_post(config: dict[str, Any], state: dict[str, Any]) -> dict[str, Any] | None:
     reddit_cfg = config.get("reddit", {})
     if not bool(reddit_cfg.get("enabled", False)):
@@ -582,6 +630,7 @@ def fetch_reddit_story_post(config: dict[str, Any], state: dict[str, Any]) -> di
     sort = str(reddit_cfg.get("sort", "top")).strip().lower() or "top"
     time_filter = str(reddit_cfg.get("time", "week")).strip().lower() or "week"
     limit = max(5, int(reddit_cfg.get("limit", 15)))
+    min_score = max(1, int(reddit_cfg.get("min_score", 6)))
     seen_ids = set(state.get("recent_reddit_ids", [])[-100:])
 
     random.shuffle(subreddits)
@@ -610,18 +659,24 @@ def fetch_reddit_story_post(config: dict[str, Any], state: dict[str, Any]) -> di
                 continue
             if len(selftext) < 280:
                 continue
+            post_score = score_reddit_story(title, selftext, subreddit)
+            if post_score < min_score:
+                continue
             candidates.append(
                 {
                     "id": post_id,
                     "subreddit": subreddit,
                     "title": title,
                     "selftext": selftext,
+                    "score": post_score,
                     "permalink": f"https://www.reddit.com{data.get('permalink', '')}",
                 }
             )
 
         if candidates:
-            return random.choice(candidates)
+            candidates.sort(key=lambda item: item.get("score", 0), reverse=True)
+            top_slice = candidates[: min(5, len(candidates))]
+            return random.choice(top_slice)
 
     return None
 

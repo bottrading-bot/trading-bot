@@ -174,6 +174,10 @@ def default_config() -> dict[str, Any]:
             "limit": max(5, env_int("REDDIT_LIMIT", 15)),
             "user_agent": os.getenv("REDDIT_USER_AGENT", "BrainZapShorts/1.0"),
             "min_score": max(1, env_int("REDDIT_MIN_SCORE", 6)),
+            "client_id": os.getenv("REDDIT_CLIENT_ID", "").strip(),
+            "client_secret": os.getenv("REDDIT_CLIENT_SECRET", "").strip(),
+            "username": os.getenv("REDDIT_USERNAME", "").strip(),
+            "password": os.getenv("REDDIT_PASSWORD", "").strip(),
         },
         "discord": {
             "webhook_url": os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
@@ -619,6 +623,39 @@ def score_reddit_story(title: str, body: str, subreddit: str) -> int:
     return score
 
 
+def get_reddit_access_token(config: dict[str, Any]) -> str | None:
+    reddit_cfg = config.get("reddit", {})
+    client_id = str(reddit_cfg.get("client_id", "")).strip()
+    client_secret = str(reddit_cfg.get("client_secret", "")).strip()
+    username = str(reddit_cfg.get("username", "")).strip()
+    password = str(reddit_cfg.get("password", "")).strip()
+    user_agent = str(reddit_cfg.get("user_agent", "BrainZapShorts/1.0")).strip() or "BrainZapShorts/1.0"
+
+    if not all([client_id, client_secret, username, password]):
+        print("Reddit OAuth nicht vollstaendig konfiguriert.", flush=True)
+        return None
+
+    try:
+        response = requests.post(
+            "https://www.reddit.com/api/v1/access_token",
+            auth=(client_id, client_secret),
+            data={
+                "grant_type": "password",
+                "username": username,
+                "password": password,
+            },
+            headers={"User-Agent": user_agent},
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        token = str(payload.get("access_token", "")).strip()
+        return token or None
+    except Exception as error:
+        print(f"Reddit OAuth fehlgeschlagen: {error}", flush=True)
+        return None
+
+
 def fetch_reddit_story_post(config: dict[str, Any], state: dict[str, Any]) -> dict[str, Any] | None:
     reddit_cfg = config.get("reddit", {})
     if not bool(reddit_cfg.get("enabled", False)):
@@ -628,9 +665,15 @@ def fetch_reddit_story_post(config: dict[str, Any], state: dict[str, Any]) -> di
     if not subreddits:
         return None
 
+    user_agent = str(reddit_cfg.get("user_agent", "BrainZapShorts/1.0"))
+    token = get_reddit_access_token(config)
+    if not token:
+        return None
+
     headers = {
-        "User-Agent": str(reddit_cfg.get("user_agent", "BrainZapShorts/1.0")),
+        "User-Agent": user_agent,
         "Accept": "application/json",
+        "Authorization": f"bearer {token}",
     }
     sort = str(reddit_cfg.get("sort", "top")).strip().lower() or "top"
     time_filter = str(reddit_cfg.get("time", "week")).strip().lower() or "week"
@@ -640,7 +683,7 @@ def fetch_reddit_story_post(config: dict[str, Any], state: dict[str, Any]) -> di
 
     random.shuffle(subreddits)
     for subreddit in subreddits:
-        url = f"https://www.reddit.com/r/{subreddit}/{sort}.json?limit={limit}&t={time_filter}"
+        url = f"https://oauth.reddit.com/r/{subreddit}/{sort}?limit={limit}&t={time_filter}"
         try:
             response = requests.get(url, headers=headers, timeout=20)
             response.raise_for_status()

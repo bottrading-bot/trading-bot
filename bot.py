@@ -162,7 +162,7 @@ def default_config() -> dict[str, Any]:
             "mode": os.getenv("UPLOAD_MODE", "manual")
         },
         "reddit": {
-            "enabled": env_bool("REDDIT_ENABLED", False),
+            "enabled": env_bool("REDDIT_ENABLED", True),
             "subreddits": [item.strip() for item in os.getenv("REDDIT_SUBREDDITS", "AmItheAsshole,TrueOffMyChest,relationship_advice,confession").split(",") if item.strip()],
             "sort": os.getenv("REDDIT_SORT", "top").strip().lower(),
             "time": os.getenv("REDDIT_TIME", "week").strip().lower(),
@@ -1015,6 +1015,7 @@ def build_video_package(config: dict[str, Any], niche: dict[str, Any], state: di
         if next_primary_due and next_primary_due > now:
             return None
 
+        reddit_enabled = bool((config.get("reddit") or {}).get("enabled", True))
         reddit_post = fetch_reddit_story_post(config, state)
         if reddit_post:
             reddit_sentences = split_reddit_sentences(reddit_post.get("selftext", ""))
@@ -1045,6 +1046,9 @@ def build_video_package(config: dict[str, Any], niche: dict[str, Any], state: di
                         "due_at": (now + timedelta(minutes=int(config.get("followup_delay_minutes", 120)))).isoformat(),
                     }
                 )
+        elif reddit_enabled:
+            print("Reddit ist aktiv, aber es wurde gerade keine brauchbare Story gefunden. Ueberspringe diesen Run.", flush=True)
+            return None
         else:
             recent_topics = state.get("recent_topics", [])[-30:]
             unseen_templates = [template for template in templates if template["title"] not in recent_topics]

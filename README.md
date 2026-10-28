@@ -26,6 +26,8 @@ FINRA hat die Ablösung der alten PDT-Zählung beschlossen; Broker haben aber bi
 
 US-Aktienorders sind standardmäßig nur in der regulären Session von 9:30 bis 16:00 Uhr US/Eastern zulässig. Dieser Bot aktiviert Extended Hours nicht. Alpaca beschreibt, dass nur bestimmte Limit-Orders für Extended Hours zulässig wären; der Bot sendet stattdessen DAY-Market-Orders ausschließlich nach bestätigtem `clock.is_open`.
 
+Die Cloudflare-Version weicht beim Ordertyp bewusst ab: Sie reicht eine GTC-Bracket-Order mit Stop und Ziel nur ein, wenn Alpaca die reguläre Sitzung als offen meldet. Extended Hours bleiben ausgeschaltet. Eine nicht sofort ausgeführte GTC-Einstiegsorder kann bis zu einer späteren regulären Sitzung offen bleiben, bis sie ausgeführt oder storniert wird. Die lokale Python-Version verwendet weiterhin DAY-Orders.
+
 ## Installation
 
 1. Python 3.11+ installieren.

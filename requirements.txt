@@ -1,11 +1,4 @@
-edge-tts==7.0.2
-gTTS==2.5.4
-piper-tts==1.4.2
-moviepy==2.1.2
-Pillow==10.4.0
-requests==2.32.3
-imageio-ffmpeg==0.5.1
-python-dotenv==1.0.1
-google-api-python-client==2.181.0
-google-auth==2.40.3
-faster-whisper==1.1.1
+alpaca-py>=0.42,<1
+python-dotenv>=1.0,<2
+pandas>=2.2,<3
+

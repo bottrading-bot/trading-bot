@@ -1,5 +1,11 @@
 # Alpaca Live Trading Bot (Startkapital 70 EUR)
 
+## Cloudflare-Version (kostenloser geplanter Worker)
+
+Der Ordner `cloudflare-worker/` enthält eine Cloudflare-Workers-Version, die alle fünf Minuten läuft und keinen eigenen PC/VPS benötigt. Die Einrichtung steht in [`cloudflare-worker/README.md`](cloudflare-worker/README.md). Sie nutzt Alpaca-Bracket-Orders mit brokerseitigem Stop-Loss und Take-Profit. Live-Orders bleiben standardmäßig ausgeschaltet.
+
+Diese Cloudflare-Version nutzt ganze Aktienanteile und feste Bracket-Exits (3% Stop / 5% Ziel); sie bildet die lokalen Trailing-/Momentum-Exits unten nicht ab. Vor Live-Betrieb müssen die Cloudflare-Grenzen und Alpaca-Order-Anforderungen beachtet werden.
+
 ## Was der Bot tut
 
 - Long-only Aktien/ETF-Bot über Alpaca LIVE API.
@@ -19,6 +25,8 @@
 FINRA hat die Ablösung der alten PDT-Zählung beschlossen; Broker haben aber bis Oktober 2027 eine Umstellungsphase. Alpaca beschreibt die neuen Intraday-Margin-Standards in seiner Dokumentation, doch die Umsetzung für dein konkretes Konto kann abweichen. Deshalb begrenzt dieser Bot vorsorglich auf höchstens drei Round-Trips in den letzten fünf Alpaca-Handelssitzungen. Der Broker kann Orders zusätzlich ablehnen.
 
 US-Aktienorders sind standardmäßig nur in der regulären Session von 9:30 bis 16:00 Uhr US/Eastern zulässig. Dieser Bot aktiviert Extended Hours nicht. Alpaca beschreibt, dass nur bestimmte Limit-Orders für Extended Hours zulässig wären; der Bot sendet stattdessen DAY-Market-Orders ausschließlich nach bestätigtem `clock.is_open`.
+
+Die Cloudflare-Version weicht beim Ordertyp bewusst ab: Sie reicht eine GTC-Bracket-Order mit Stop und Ziel nur ein, wenn Alpaca die reguläre Sitzung als offen meldet. Extended Hours bleiben ausgeschaltet. Eine nicht sofort ausgeführte GTC-Einstiegsorder kann bis zu einer späteren regulären Sitzung offen bleiben, bis sie ausgeführt oder storniert wird. Die lokale Python-Version verwendet weiterhin DAY-Orders.
 
 ## Installation
 

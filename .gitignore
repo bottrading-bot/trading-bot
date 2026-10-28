@@ -1,9 +1,8 @@
 .env
-bot_state.json
-shorts_output/
-shorts_assets/music/
-__pycache__/
-*.pyc
-bot_env/
 .venv/
-.idea/
+__pycache__/
+*.py[cod]
+bot.log
+bot_state.json
+bot_state.tmp
+

@@ -5,7 +5,7 @@
 - Long-only Aktien/ETF-Bot über Alpaca LIVE API.
 - Signale aus dem alten Entwurf: SPY-Trendfilter und MA20/MA50, EMA9, Momentum, RSI und Volumen.
 - Höchstens eine Bot-Position zur selben Zeit.
-- Maximal 3 Round-Trips in einem rollierenden 7-Kalendertage-Fenster. Das ist absichtlich konservativ und bildet mindestens den alten 3-in-5-Business-Day-Schutz nach.
+- Maximal 3 Round-Trips in den letzten 5 Alpaca-Handelssitzungen, anhand des Alpaca-Kalenders (Feiertage werden berücksichtigt).
 - Nur reguläre US-Handelszeit: der Bot fragt vor jedem Durchlauf und direkt vor jedem Orderauftrag Alpacas Markt-Uhr ab. Keine Orders werden außerhalb des regulären Marktes eingereicht oder für später vorgemerkt.
 - Keine Leverage: Ordergröße wird vom verfügbaren Cash, nicht von Buying Power, abgeleitet.
 - Startkapital-Cap: 77.93 USD (70 EUR × 1.1133 ECB-Referenzkurs am 28.10.2026). Der tatsächliche Cash-Bestand im Alpaca-Konto hat Vorrang und kann nach Umtausch-/Transferkosten niedriger sein.
@@ -15,7 +15,7 @@
 
 ## Wichtig zu den Handelsregeln
 
-Alpacas aktuelle Dokumentation beschreibt die Ablösung des alten PDT-Zählers durch Intraday-Margin-Standards. Übergangs-/Kontoeinstellungen können trotzdem abweichen; Alpacas Broker-Entscheidung bleibt maßgeblich. Der Bot setzt vorsorglich einen strengeren lokalen Grenzwert von höchstens drei Round-Trips im 7-Tage-Fenster und führt nur Long-Aktiengeschäfte aus. Der Broker kann Orders zusätzlich ablehnen.
+FINRA hat die Ablösung der alten PDT-Zählung beschlossen; Broker haben aber bis Oktober 2027 eine Umstellungsphase. Alpaca beschreibt die neuen Intraday-Margin-Standards in seiner Dokumentation, doch die Umsetzung für dein konkretes Konto kann abweichen. Deshalb begrenzt dieser Bot vorsorglich auf höchstens drei Round-Trips in den letzten fünf Alpaca-Handelssitzungen. Der Broker kann Orders zusätzlich ablehnen.
 
 US-Aktienorders sind standardmäßig nur in der regulären Session von 9:30 bis 16:00 Uhr US/Eastern zulässig. Dieser Bot aktiviert Extended Hours nicht. Alpaca beschreibt, dass nur bestimmte Limit-Orders für Extended Hours zulässig wären; der Bot sendet stattdessen DAY-Market-Orders ausschließlich nach bestätigtem `clock.is_open`.
 

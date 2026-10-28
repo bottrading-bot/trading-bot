@@ -26,6 +26,7 @@ load_dotenv()
 # after FX conversion/transfer costs. The bot never uses buying power or margin.
 CAPITAL_CAP_USD = float(os.getenv("CAPITAL_CAP_USD", "77.93"))
 POSITION_CASH_FRACTION = 0.90
+MAX_TRADE_LOSS_USD = float(os.getenv("MAX_TRADE_LOSS_USD", "5.57"))  # ≈ €5 at the configured reference FX rate.
 MAX_DAILY_LOSS_PCT = 0.05
 MAX_ROUND_TRIPS_IN_5_SESSIONS = 3  # Conservative guard for accounts still on legacy controls.
 ENTRY_SCORE_THRESHOLD = 4
@@ -220,7 +221,12 @@ def submit_buy(symbol: str) -> None:
         log.warning("Entry cancelled: account has an open order already.")
         return
     _, cash = account_snapshot()
-    notional = round(min(cash * POSITION_CASH_FRACTION, CAPITAL_CAP_USD * POSITION_CASH_FRACTION), 2)
+    # Risk budget limits position size against the software stop. The 5 EUR
+    # equivalent is a planned loss only; gaps/slippage can exceed it.
+    risk_limited_notional = MAX_TRADE_LOSS_USD / STOP_LOSS_PCT
+    notional = round(min(cash * POSITION_CASH_FRACTION,
+                         CAPITAL_CAP_USD * POSITION_CASH_FRACTION,
+                         risk_limited_notional), 2)
     if notional < MIN_NOTIONAL_USD:
         log.warning("Entry cancelled: cash available is below minimum notional.")
         return

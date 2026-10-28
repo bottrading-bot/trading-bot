@@ -10,6 +10,7 @@
 - Keine Leverage: Ordergröße wird vom verfügbaren Cash, nicht von Buying Power, abgeleitet.
 - Startkapital-Cap: 77.93 USD (70 EUR × 1.1133 ECB-Referenzkurs am 28.10.2026). Der tatsächliche Cash-Bestand im Alpaca-Konto hat Vorrang und kann nach Umtausch-/Transferkosten niedriger sein.
 - Pro Einstieg maximal 90% des verfügbaren Cash, begrenzt auf den Startkapital-Cap.
+- Geplantes Verlustrisiko je Einstieg maximal 5 EUR (5.57 USD zum verwendeten Referenzkurs); bei der aktuellen 90%-Positionsgröße und 3%-Stop wären es zunächst ungefähr 1.89 EUR. Die 5-EUR-Grenze begrenzt die Positionsgröße zusätzlich, falls Kapital oder Einstellungen später steigen.
 - Tagesverlustgrenze 5%; sie sperrt neue Einstiege, lässt aber das Management einer offenen Position weiterlaufen.
 - Stop-Loss 3%, Trailing-Stop, Momentum-Umkehr und Take-Profit 5%.
 
@@ -35,5 +36,5 @@ Keine API-Schlüssel, Tokens oder `.env`-Dateien in GitHub hochladen. Die alten 
 
 ## Grenzen
 
-Die Strategie ist aus dem alten Bot rekonstruiert, nicht validiert und verspricht keinen Gewinn. Stop-Schwellen werden per 5-Minuten-Marktdaten überwacht und sind keine garantierten Ausführungspreise. Bei geschlossenem Markt oder Verbindungsfehler kann ein Exit erst später gesendet werden; Kurslücken und Slippage sind möglich. Der Bot ist ein persönliches Softwareprojekt, keine Anlageberatung.
+Die Strategie ist aus dem alten Bot rekonstruiert, nicht validiert und verspricht keinen Gewinn. Die 5 EUR sind ein geplantes Risiko am 3%-Stop, keine garantierte Verlustobergrenze. Stop-Schwellen werden per 5-Minuten-Marktdaten überwacht und sind keine garantierten Ausführungspreise. Bei geschlossenem Markt oder Verbindungsfehler kann ein Exit erst später gesendet werden; Kurslücken und Slippage sind möglich. Der Bot ist ein persönliches Softwareprojekt, keine Anlageberatung.
 

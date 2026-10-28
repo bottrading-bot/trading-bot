@@ -17,7 +17,7 @@ from alpaca.data.enums import DataFeed
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
-from alpaca.trading.requests import GetOrdersRequest, MarketOrderRequest
+from alpaca.trading.requests import GetCalendarRequest, GetOrdersRequest, MarketOrderRequest
 
 load_dotenv()
 
@@ -27,7 +27,7 @@ load_dotenv()
 CAPITAL_CAP_USD = float(os.getenv("CAPITAL_CAP_USD", "77.93"))
 POSITION_CASH_FRACTION = 0.90
 MAX_DAILY_LOSS_PCT = 0.05
-MAX_ROUND_TRIPS_IN_7_CALENDAR_DAYS = 3  # Conservative guard for the legacy 5-business-day limit.
+MAX_ROUND_TRIPS_IN_5_SESSIONS = 3  # Conservative guard for accounts still on legacy controls.
 ENTRY_SCORE_THRESHOLD = 4
 POLL_SECONDS = 60
 MIN_NOTIONAL_USD = 1.00
@@ -112,7 +112,19 @@ def daily_loss_hit() -> bool:
 
 
 def recent_round_trip_count() -> int:
-    cutoff = dt.datetime.now(NY).date() - dt.timedelta(days=6)
+    assert client is not None
+    today = dt.datetime.now(NY).date()
+    # Use Alpaca's exchange calendar so holidays and early-week sessions are
+    # counted as trading sessions, not guessed from weekdays.
+    try:
+        calendar = client.get_calendar(filters=GetCalendarRequest(
+            start=today - dt.timedelta(days=14), end=today
+        ))
+        session_dates = [item.date.isoformat() for item in calendar]
+        window = set(session_dates[-5:])
+    except Exception:
+        log.exception("Cannot read Alpaca calendar; blocking new entry conservatively.")
+        return MAX_ROUND_TRIPS_IN_5_SESSIONS
     rows = state.get("round_trips", [])
     kept = []
     for row in rows:
@@ -120,7 +132,7 @@ def recent_round_trip_count() -> int:
             date = dt.date.fromisoformat(row["date"])
         except (TypeError, ValueError, KeyError):
             continue
-        if date >= cutoff:
+        if date.isoformat() in window:
             kept.append(row)
     state["round_trips"] = kept
     save_state()
@@ -295,8 +307,8 @@ def run_once() -> None:
     if daily_loss_hit():
         log.warning("Daily loss cap reached; new entries disabled, open-position exits remain enabled.")
         return
-    if recent_round_trip_count() >= MAX_ROUND_TRIPS_IN_7_CALENDAR_DAYS:
-        log.info("Conservative round-trip cap reached (3 within the rolling 7-day window).")
+    if recent_round_trip_count() >= MAX_ROUND_TRIPS_IN_5_SESSIONS:
+        log.info("Conservative round-trip cap reached (3 within the last 5 Alpaca sessions).")
         return
     candidate = choose_candidate()
     if candidate:

@@ -1,5 +1,11 @@
 # Alpaca Live Trading Bot (Startkapital 70 EUR)
 
+## Cloudflare-Version (kostenloser geplanter Worker)
+
+Der Ordner `cloudflare-worker/` enthält eine Cloudflare-Workers-Version, die alle fünf Minuten läuft und keinen eigenen PC/VPS benötigt. Die Einrichtung steht in [`cloudflare-worker/README.md`](cloudflare-worker/README.md). Sie nutzt Alpaca-Bracket-Orders mit brokerseitigem Stop-Loss und Take-Profit. Live-Orders bleiben standardmäßig ausgeschaltet.
+
+Diese Cloudflare-Version nutzt ganze Aktienanteile und feste Bracket-Exits (3% Stop / 5% Ziel); sie bildet die lokalen Trailing-/Momentum-Exits unten nicht ab. Vor Live-Betrieb müssen die Cloudflare-Grenzen und Alpaca-Order-Anforderungen beachtet werden.
+
 ## Was der Bot tut
 
 - Long-only Aktien/ETF-Bot über Alpaca LIVE API.

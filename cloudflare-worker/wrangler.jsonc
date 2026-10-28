@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "alpaca-trading-bot",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-28",
+  "workers_dev": true,
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+  "kv_namespaces": [
+    {
+      "binding": "BOT_STATE",
+      "id": "REPLACE_WITH_KV_NAMESPACE_ID"
+    }
+  ],
+  "vars": {
+    "ENABLE_LIVE_ORDERS": "false",
+    "CAPITAL_CAP_USD": "77.93",
+    "MAX_TRADE_LOSS_USD": "5.57"
+  }
+}
+
